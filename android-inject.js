@@ -154,8 +154,9 @@
     } catch (e) { return 'fail'; }
   }
 
-  async function downloadOfflineImages(onProgress){
-    var ids = Object.keys(BIRDS);
+  // Download photos for an explicit list of bird ids (already-saved birds and
+  // birds with a user photo are skipped inside downloadOne).
+  async function downloadOfflineImages(ids, onProgress){
     var total = ids.length, done = 0, idx = 0;
     var CONC = 4;
     async function worker(){
@@ -172,6 +173,33 @@
     await Promise.all(workers);
     save();
     return { total: total, saved: offlineCount() };
+  }
+
+  /* ---- Region helpers ----
+     regionBirds(), regionName(), regionIcon() and REGION_NAMES all come from
+     the page's own code, so we reuse them to keep region membership in sync. */
+  function listedRegions(){
+    return (state.loadedRegions && state.loadedRegions.length)
+      ? state.loadedRegions.slice()
+      : Object.keys(REGION_NAMES);
+  }
+  function regionIds(code){
+    try { return regionBirds(code).filter(function(id){ return BIRDS[id]; }); }
+    catch (e) { return []; }
+  }
+  // A bird's photo is available offline if we downloaded it or the user added
+  // their own photo for it.
+  function savedOffline(id){ return !!(state.offlineImages[id] || state.birdPhotos[id]); }
+  function regionSaved(ids){
+    var n = 0;
+    for (var i = 0; i < ids.length; i++) if (savedOffline(ids[i])) n++;
+    return n;
+  }
+  // Union of every listed region's birds (for the "Download all" action).
+  function allRegionIds(){
+    var set = Object.create(null);
+    listedRegions().forEach(function(c){ regionIds(c).forEach(function(id){ set[id] = 1; }); });
+    return Object.keys(set);
   }
 
   async function removeOfflineImages(){
@@ -195,57 +223,105 @@
     row.className = 'set-row col offline-row';
     row.innerHTML =
       '<div class="set-label"><div class="set-title">Offline bird images</div>' +
-      '<div class="set-desc">Download bird photos so they stay available without a connection. ' +
-      'Photos are fetched from Wikipedia and stored on your device.</div></div>' +
+      '<div class="set-desc">Download bird photos for the regions you track so they stay ' +
+      'available in the field without a connection. Photos are fetched from Wikipedia and ' +
+      'stored on your device.</div></div>' +
       '<div class="offline-bar"><span></span></div>' +
       '<div class="offline-status"></div>' +
+      '<div class="offline-regions"></div>' +
       '<div class="offline-actions">' +
-      '<button class="btn" id="offDownload">Download images for offline use</button>' +
+      '<button class="btn" id="offDownloadAll">Download all regions</button>' +
       '<button class="btn ghost" id="offRemove">Remove offline images</button>' +
       '</div>';
     if (danger) settingsEl.insertBefore(row, danger); else settingsEl.appendChild(row);
 
     var statusEl = row.querySelector('.offline-status');
-    var bar  = row.querySelector('.offline-bar');
-    var fill = row.querySelector('.offline-bar > span');
-    var dl   = row.querySelector('#offDownload');
-    var rm   = row.querySelector('#offRemove');
+    var bar    = row.querySelector('.offline-bar');
+    var fill   = row.querySelector('.offline-bar > span');
+    var regBox = row.querySelector('.offline-regions');
+    var dlAll  = row.querySelector('#offDownloadAll');
+    var rm     = row.querySelector('#offRemove');
 
-    function refresh(){
+    var busy = false;
+
+    function allButtons(){ return row.querySelectorAll('button'); }
+    function setBusy(on){
+      busy = on;
+      allButtons().forEach(function(b){ b.disabled = on; });
+    }
+
+    function refreshStatus(){
       var c = offlineCount();
       statusEl.textContent = c > 0
         ? (c + ' bird image' + (c === 1 ? '' : 's') + ' saved for offline use.')
         : 'No images downloaded yet.';
       rm.style.display = c > 0 ? '' : 'none';
     }
-    refresh();
 
-    dl.onclick = async function(){
-      dl.disabled = true; rm.disabled = true;
-      bar.style.display = 'block'; dl.textContent = 'Downloading…';
+    // Build / rebuild the per-region rows with up-to-date saved counts.
+    function renderRegions(){
+      regBox.innerHTML = '';
+      listedRegions().forEach(function(code){
+        var ids   = regionIds(code);
+        if (!ids.length) return;
+        var saved = regionSaved(ids);
+        var full  = saved >= ids.length;
+
+        var r = document.createElement('div');
+        r.className = 'offline-region';
+        r.innerHTML =
+          '<div class="offline-region-info">' +
+          '<div class="offline-region-name">' + regionIcon(code) + ' ' + esc(regionName(code)) + '</div>' +
+          '<div class="offline-region-count">' + saved + ' / ' + ids.length + ' photos saved</div>' +
+          '</div>';
+
+        var b = document.createElement('button');
+        b.className = 'btn sm offline-region-dl';
+        b.textContent = full ? 'Saved ✓' : 'Download';
+        b.disabled = full || busy;
+        b.onclick = function(){ runDownload(ids, regionName(code)); };
+        r.appendChild(b);
+        regBox.appendChild(r);
+      });
+    }
+
+    function refresh(){ refreshStatus(); renderRegions(); }
+
+    // Shared download runner: drives the progress bar and keeps the UI locked
+    // while photos are being fetched.
+    async function runDownload(ids, label){
+      if (busy) return;
+      if (!ids.length) { toast('Nothing to download for ' + label); return; }
+      setBusy(true);
+      bar.style.display = 'block'; fill.style.width = '0';
+      statusEl.textContent = 'Downloading ' + label + '…';
       try {
-        await downloadOfflineImages(function(done, total){
+        await downloadOfflineImages(ids, function(done, total){
           fill.style.width = Math.round(done / total * 100) + '%';
-          statusEl.textContent = 'Downloading… ' + done + ' / ' + total;
+          statusEl.textContent = 'Downloading ' + label + '… ' + done + ' / ' + total;
         });
-        toast('Offline images ready (' + offlineCount() + ' saved)');
+        toast(label + ' ready (' + offlineCount() + ' saved)');
         render();
       } catch (e) {
         toast('Download finished with some errors');
       }
-      dl.disabled = false; rm.disabled = false;
-      dl.textContent = 'Download images for offline use';
       bar.style.display = 'none'; fill.style.width = '0';
+      setBusy(false);
+      refresh();
+    }
+
+    dlAll.onclick = function(){ runDownload(allRegionIds(), 'all regions'); };
+
+    rm.onclick = async function(){
+      if (busy) return;
+      setBusy(true);
+      await removeOfflineImages();
+      toast('Offline images removed');
+      setBusy(false);
       refresh();
     };
 
-    rm.onclick = async function(){
-      rm.disabled = true; dl.disabled = true;
-      await removeOfflineImages();
-      toast('Offline images removed');
-      refresh();
-      dl.disabled = false; rm.disabled = false;
-    };
+    refresh();
   }
 
   // Wrap the page's openSettings so the modal gains the offline section.
