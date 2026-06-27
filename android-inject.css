@@ -1,0 +1,57 @@
+/* ============================================================
+   Android shell adjustments for Birdomania.
+   Injected by MainActivity; not part of the website copy.
+   ============================================================ */
+
+:root{
+  --android-inset-top:0px;
+  --android-inset-right:0px;
+  --android-inset-bottom:0px;
+  --android-inset-left:0px;
+}
+
+/* Make room for the status bar: the sticky header already paints its cream
+   background to the very top of the screen, so we just push its contents down
+   below the status bar / display cutout. */
+header.app{
+  padding-top: var(--android-inset-top) !important;
+}
+
+/* Keep page content clear of the gesture/navigation bar at the bottom and of
+   side cutouts (e.g. in landscape). */
+body{
+  padding-bottom: var(--android-inset-bottom) !important;
+}
+main{
+  padding-left: calc(26px + var(--android-inset-left)) !important;
+  padding-right: calc(26px + var(--android-inset-right)) !important;
+}
+
+/* Float the back-to-top button above the navigation bar. */
+.to-top{
+  bottom: calc(24px + var(--android-inset-bottom)) !important;
+  right: calc(22px + var(--android-inset-right)) !important;
+}
+
+/* Fix the extra blank gutter: never allow horizontal scrolling/overflow so the
+   page fills the screen width exactly. */
+html,body{
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+}
+
+/* ---- Offline-images settings section ---- */
+.offline-row .offline-status{
+  font-size:13px;color:var(--ink-soft);margin-top:8px;
+}
+.offline-row .offline-bar{
+  height:6px;border-radius:4px;background:var(--line);
+  overflow:hidden;margin-top:8px;display:none;
+}
+.offline-row .offline-bar > span{
+  display:block;height:100%;width:0;background:var(--forest-light);
+  transition:width .15s ease;
+}
+.offline-row .offline-actions{
+  display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;
+}
