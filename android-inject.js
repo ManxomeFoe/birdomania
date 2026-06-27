@@ -394,6 +394,133 @@
     });
   }
 
+  /* ---- 6. Family-specific bird silhouettes ----
+     The page's birdSVG(id) draws ONE perched-songbird shape recoloured per
+     species. We replace it (reusing the page's global, so every call site and
+     onerror fallback benefits) with a silhouette chosen from the bird's family
+     — a duck looks like a duck, a hawk like a hawk. Same contract: returns a
+     100x100 <svg> string. Shading uses translucent overlays so we never need
+     per-shade colour maths; body is tinted to the species colour. */
+  (function installBirdSilhouettes(){
+    if (typeof birdSVG !== 'function') return;
+
+    // Map a family string to one of our silhouette archetypes.
+    function groupFor(fam){
+      var f = (fam || '').toLowerCase();
+      if (/duck|geese|goose|swan|loon|grebe|merganser|teal|eider|scoter|wigeon|pintail|bufflehead|goldeneye|canvasback|scaup|smew/.test(f)) return 'waterfowl';
+      if (/hawk|eagle|falcon|osprey|kite|harrier|owl|vulture|kestrel|gyrfalcon|merlin|goshawk|caracara/.test(f)) return 'raptor';
+      if (/heron|egret|crane|spoonbill|ibis|stork|bittern|flamingo/.test(f)) return 'wader';
+      if (/sandpiper|plover|godwit|curlew|yellowlegs|turnstone|dowitcher|snipe|phalarope|stint|knot|dunlin|tattler|oystercatcher|avocet|stilt|surfbird|sanderling|whimbrel|dotterel|ruff|killdeer/.test(f)) return 'shorebird';
+      if (/hummingbird/.test(f)) return 'hummingbird';
+      if (/woodpecker|sapsucker|flicker|wryneck/.test(f)) return 'woodpecker';
+      if (/gull|tern|auk|puffin|murre|guillemot|kittiwake|jaeger|pelican|cormorant|albatross|fulmar|shearwater|petrel|gannet|skua|kingfisher/.test(f)) return 'seabird';
+      if (/grouse|quail|turkey|pheasant|ptarmigan|partridge|chicken|fowl/.test(f)) return 'fowl';
+      return 'passerine';
+    }
+
+    var DK = '#2b2117', BILL = '#8a6d3b', LEG = '#6b5333',
+        WING = '#0000001f', HI = '#ffffff24', SHADOW = '#0000000f';
+    function shadow(cx, rx){ return '<ellipse cx="' + cx + '" cy="86" rx="' + rx + '" ry="4" fill="' + SHADOW + '"/>'; }
+    function eye(cx, cy){ return '<circle cx="' + cx + '" cy="' + cy + '" r="2.1" fill="' + DK + '"/>'; }
+
+    var SIL = {
+      // Plump perched songbird facing right, on a twig.
+      passerine: function(c){ return shadow(50, 26) +
+        '<path d="M32 64 q2 -22 22 -25 q17 -2 23 9 q5 9 -4 16 q-10 8 -24 7 q-14 -1 -17 -7z" fill="' + c + '"/>' +
+        '<circle cx="66" cy="40" r="11" fill="' + c + '"/>' +
+        '<path d="M39 60 q13 -5 26 0 q-9 8 -21 7 q-7 -1 -5 -7z" fill="' + HI + '"/>' +
+        '<path d="M40 50 q15 -4 27 3 q-4 13 -21 12 q-10 -1 -6 -15z" fill="' + WING + '"/>' +
+        eye(70, 38) + '<path d="M77 40 l11 -2 -10 5z" fill="' + BILL + '"/>' +
+        '<path d="M50 78 l-2 9 m7 -9 l1 9" stroke="' + LEG + '" stroke-width="2" stroke-linecap="round" fill="none"/>' +
+        '<path d="M20 86 q30 -7 60 0" stroke="' + BILL + '" stroke-width="2.4" fill="none" opacity=".5"/>'; },
+
+      // Duck floating on a waterline.
+      waterfowl: function(c){ return '<path d="M0 72 q50 -8 100 0 V100 H0z" fill="#00000010"/>' +
+        '<path d="M22 66 q4 -16 30 -16 q24 0 32 9 q5 6 -2 9 q-22 6 -62 1 q-4 -1 2 -3z" fill="' + c + '"/>' +
+        '<path d="M70 58 q12 -2 16 -10 q3 5 -1 11 q-6 5 -15 4z" fill="' + c + '"/>' +
+        '<circle cx="80" cy="44" r="9" fill="' + c + '"/>' +
+        '<path d="M30 62 q24 -6 48 0 q-12 6 -30 6 q-14 0 -18 -6z" fill="' + HI + '"/>' +
+        eye(83, 42) + '<path d="M88 44 l11 0 -10 4z" fill="#caa24a"/>'; },
+
+      // Upright raptor with a hooked bill.
+      raptor: function(c){ return shadow(48, 22) +
+        '<path d="M36 78 q-6 -28 8 -42 q9 -9 20 -5 q10 4 9 18 q-1 16 -9 29 q-5 7 -14 6 q-10 -1 -14 -6z" fill="' + c + '"/>' +
+        '<path d="M44 40 q10 -10 22 -4 q-2 16 -12 22 q-9 -6 -10 -18z" fill="' + WING + '"/>' +
+        '<circle cx="52" cy="28" r="12" fill="' + c + '"/>' +
+        '<path d="M44 30 q8 -7 16 0 q-3 -10 -8 -10 q-6 0 -8 10z" fill="' + HI + '"/>' +
+        eye(56, 26) + '<path d="M63 27 q7 0 7 6 q-4 -2 -8 -1z" fill="#d9a531"/>' +
+        '<path d="M40 80 l-1 8 m12 -8 l1 8 m10 -9 l2 8" stroke="' + LEG + '" stroke-width="2.4" stroke-linecap="round" fill="none"/>'; },
+
+      // Long-legged, long-necked wader (heron/crane).
+      wader: function(c){ return shadow(50, 18) +
+        '<path d="M40 64 q-3 -12 14 -14 q16 -2 22 6 q4 6 -3 10 q-10 5 -22 4 q-9 -1 -11 -6z" fill="' + c + '"/>' +
+        '<path d="M52 52 q-2 -22 6 -34 q3 -4 6 -2 q2 2 0 6 q-6 14 -4 30z" fill="' + c + '"/>' +
+        '<circle cx="60" cy="16" r="7" fill="' + c + '"/>' +
+        eye(63, 14) + '<path d="M66 16 l16 -3 -15 6z" fill="#d6a23e"/>' +
+        '<path d="M44 60 q14 -4 28 0 q-10 5 -22 4 q-7 -1 -6 -4z" fill="' + HI + '"/>' +
+        '<path d="M46 66 l-3 22 m18 -22 l4 22" stroke="' + LEG + '" stroke-width="2.2" stroke-linecap="round" fill="none"/>'; },
+
+      // Small shorebird: round body, long legs, straight bill.
+      shorebird: function(c){ return shadow(50, 18) +
+        '<path d="M36 60 q2 -16 20 -17 q16 -1 22 8 q4 7 -4 12 q-9 5 -22 4 q-13 -1 -16 -7z" fill="' + c + '"/>' +
+        '<circle cx="66" cy="42" r="9" fill="' + c + '"/>' +
+        '<path d="M41 56 q13 -5 25 0 q-9 7 -20 6 q-7 -1 -5 -6z" fill="' + HI + '"/>' +
+        '<path d="M41 48 q14 -3 24 3 q-4 11 -19 10 q-9 -1 -5 -13z" fill="' + WING + '"/>' +
+        eye(69, 40) + '<path d="M75 42 l18 -1 -18 3z" fill="' + DK + '"/>' +
+        '<path d="M48 62 l-3 24 m14 -24 l3 24" stroke="' + LEG + '" stroke-width="1.8" stroke-linecap="round" fill="none"/>'; },
+
+      // Hovering hummingbird with a needle bill and blurred wing.
+      hummingbird: function(c){ return shadow(46, 14) +
+        '<path d="M34 56 q4 -12 20 -12 q14 0 18 7 q3 6 -4 9 q-12 4 -26 1 q-9 -2 -8 -5z" fill="' + c + '"/>' +
+        '<circle cx="58" cy="44" r="8" fill="' + c + '"/>' +
+        '<path d="M40 52 q12 -4 22 0 q-8 6 -18 5 q-6 -1 -4 -5z" fill="' + HI + '"/>' +
+        '<path d="M30 40 q22 0 34 8 q-16 6 -34 0z" fill="' + WING + '"/>' +
+        eye(61, 42) + '<path d="M65 44 l22 6 -22 -1z" stroke="' + DK + '" stroke-width="1.5" fill="none"/>' +
+        '<path d="M40 64 l-2 8 m8 -8 l1 8" stroke="' + LEG + '" stroke-width="1.5" stroke-linecap="round" fill="none"/>'; },
+
+      // Woodpecker clinging vertically to a trunk (trunk on the left).
+      woodpecker: function(c){ return '<rect x="14" y="0" width="13" height="100" fill="#00000014"/>' +
+        '<rect x="24" y="0" width="3" height="100" fill="#0000001a"/>' +
+        '<path d="M30 24 q-4 28 6 50 q6 13 16 11 q9 -2 7 -16 q-3 -24 -12 -42 q-7 -13 -17 -3z" fill="' + c + '"/>' +
+        '<path d="M34 34 q10 -6 16 6 q-3 18 -10 28 q-9 -14 -6 -34z" fill="' + WING + '"/>' +
+        '<circle cx="32" cy="22" r="9" fill="' + c + '"/>' +
+        '<path d="M30 16 q4 -8 8 0 q-2 -8 -8 0z" fill="#c4392f"/>' +
+        eye(34, 21) + '<path d="M27 23 l-13 -2 13 5z" fill="' + DK + '"/>'; },
+
+      // Standing/swimming seabird (gull/auk) with a stout bill.
+      seabird: function(c){ return '<path d="M0 74 q50 -7 100 0 V100 H0z" fill="#00000010"/>' +
+        '<path d="M24 66 q2 -18 28 -18 q26 0 32 10 q4 7 -4 10 q-24 6 -58 1 q-4 -1 2 -3z" fill="' + c + '"/>' +
+        '<path d="M52 50 q-2 -16 8 -22 q3 -2 5 1 q2 3 -1 6 q-7 6 -6 16z" fill="' + c + '"/>' +
+        '<circle cx="63" cy="26" r="8" fill="' + c + '"/>' +
+        '<path d="M32 62 q24 -6 46 0 q-12 6 -28 6 q-14 0 -18 -6z" fill="' + HI + '"/>' +
+        eye(66, 24) + '<path d="M69 25 l13 -1 -12 5z" fill="#e0a32f"/>'; },
+
+      // Plump ground bird (grouse/quail) with a short tail.
+      fowl: function(c){ return shadow(50, 24) +
+        '<path d="M28 70 q0 -24 26 -26 q22 -2 30 10 q6 9 -2 17 q-12 10 -34 9 q-18 -1 -20 -10z" fill="' + c + '"/>' +
+        '<path d="M78 56 q14 -4 20 -2 q-6 8 -20 10z" fill="' + c + '"/>' +
+        '<circle cx="38" cy="46" r="10" fill="' + c + '"/>' +
+        '<path d="M37 38 q4 -10 9 -3 q-1 -7 -6 -7 q-5 1 -3 10z" fill="' + DK + '"/>' +
+        '<path d="M36 66 q20 -6 38 0 q-12 7 -28 6 q-12 -1 -10 -6z" fill="' + HI + '"/>' +
+        eye(35, 44) + '<path d="M28 46 l-10 1 10 3z" fill="' + BILL + '"/>' +
+        '<path d="M42 78 l-2 9 m9 -9 l1 9" stroke="' + LEG + '" stroke-width="2.4" stroke-linecap="round" fill="none"/>'; }
+    };
+
+    function makeSVG(id){
+      var b = BIRDS[id] || {};
+      var c = b.col || '#6b7a8f';
+      var gid = 'bsg-' + id;
+      var inner = (SIL[groupFor(b.fam)] || SIL.passerine)(c);
+      return '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">' +
+        '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="#efe6cd"/><stop offset="1" stop-color="#e2d5b4"/></linearGradient></defs>' +
+        '<rect width="100" height="100" fill="url(#' + gid + ')"/>' + inner + '</svg>';
+    }
+    var _origBirdSVG = birdSVG;
+    window.birdSVG = function(id, opts){ try { return makeSVG(id); } catch (e) { return _origBirdSVG(id, opts); } };
+    birdSVG = window.birdSVG;
+  })();
+
   // Wrap the page's openSettings so the modal gains the theme picker + offline section.
   if (typeof openSettings === 'function') {
     var orig = openSettings;
