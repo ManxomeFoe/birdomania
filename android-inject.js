@@ -324,13 +324,83 @@
     refresh();
   }
 
-  // Wrap the page's openSettings so the modal gains the offline section.
+  /* ---- 5. Extra colour themes ----
+     The page stores its theme in state.prefs.theme ("light"/"dark") and applies
+     it via the global applyTheme(). We widen that to "light"/"sepia"/"dark"/
+     "nocturne" by wrapping applyTheme() (to add the extra body classes) and
+     replacing the Settings dark-mode toggle with a 4-way theme picker. CSS for
+     the palettes lives in android-inject.css. */
+  var THEME_KEYS = ['light', 'sepia', 'dark', 'nocturne'];
+  var THEME_META = {
+    light:    { label: 'Classic',  color: '#2f4a3c' },
+    sepia:    { label: 'Sepia',    color: '#4c5d36' },
+    dark:     { label: 'Dark',     color: '#1c1a16' },
+    nocturne: { label: 'Nocturne', color: '#10171b' }
+  };
+  function themePref(){
+    var t = state.prefs && state.prefs.theme;
+    return THEME_META[t] ? t : 'light';
+  }
+
+  if (typeof applyTheme === 'function') {
+    var _applyTheme = applyTheme;
+    // Reassign the page's global so inline handlers calling applyTheme() get this.
+    applyTheme = function(){
+      _applyTheme.apply(this, arguments);     // base: toggles .dark for theme==='dark'
+      var t = themePref();
+      var b = document.body;
+      b.classList.remove('theme-sepia', 'theme-nocturne');
+      if (t === 'sepia')         b.classList.add('theme-sepia');
+      else if (t === 'nocturne') b.classList.add('dark', 'theme-nocturne');
+      var tc = document.querySelector('meta[name="theme-color"]');
+      if (tc) tc.setAttribute('content', THEME_META[t].color);
+    };
+    window.applyTheme = applyTheme;
+    applyTheme();   // re-apply now (boot already ran the original before inject loaded)
+  }
+
+  function injectThemeSection(settingsEl){
+    if (settingsEl.querySelector('.theme-row')) return;
+    // Hide the page's built-in Dark-mode toggle; the picker supersedes it.
+    var darkInput = settingsEl.querySelector('#setDark');
+    var darkRow = darkInput && darkInput.closest('.set-row');
+    if (darkRow) darkRow.style.display = 'none';
+
+    var row = document.createElement('div');
+    row.className = 'set-row col theme-row';
+    var cur = themePref();
+    row.innerHTML =
+      '<div class="set-label"><div class="set-title">Theme</div>' +
+      '<div class="set-desc">Pick a colour theme. Dark and Nocturne suit low light.</div></div>' +
+      '<div class="seg" id="themePick">' +
+      THEME_KEYS.map(function(k){
+        return '<button data-theme="' + k + '" class="' + (k === cur ? 'active' : '') + '">' +
+               THEME_META[k].label + '</button>';
+      }).join('') +
+      '</div>';
+    if (darkRow && darkRow.parentNode) darkRow.parentNode.insertBefore(row, darkRow);
+    else settingsEl.insertBefore(row, settingsEl.firstChild);
+
+    row.querySelectorAll('#themePick button').forEach(function(btn){
+      btn.onclick = function(){
+        if (!state.prefs) state.prefs = { theme: 'light', nameMode: 'both' };
+        state.prefs.theme = btn.dataset.theme;
+        save();
+        applyTheme();
+        row.querySelectorAll('#themePick button').forEach(function(b){
+          b.classList.toggle('active', b === btn);
+        });
+      };
+    });
+  }
+
+  // Wrap the page's openSettings so the modal gains the theme picker + offline section.
   if (typeof openSettings === 'function') {
     var orig = openSettings;
     window.openSettings = function(){
       orig.apply(this, arguments);
       var s = document.querySelector('#modal-root .settings');
-      if (s) injectOfflineSection(s);
+      if (s) { injectThemeSection(s); injectOfflineSection(s); }
     };
     var btn = document.getElementById('btnSettings');
     if (btn) btn.onclick = window.openSettings;

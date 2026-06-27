@@ -76,3 +76,63 @@ html,body{
 .offline-row .offline-region-dl{
   flex:0 0 auto;
 }
+
+/* ============================================================
+   Extra colour themes (beyond the built-in light/dark).
+   Applied by android-inject.js via state.prefs.theme. The app's tokens are
+   CSS custom properties on :root / body.dark, so a theme is just an override.
+   ============================================================ */
+
+/* ---- Sepia: a warm parchment / field-journal light theme ---- */
+body.theme-sepia{
+  --paper:#e9dcc0;
+  --paper-2:#e1d1ae;
+  --ink:#382a19;
+  --ink-soft:#6e5a40;
+  --forest:#4c5d36;
+  --forest-light:#6a7d49;
+  --rust:#9c4a28;
+  --umber:#8a6d3b;
+  --gold:#b88a2e;
+  --line:#cdb789;
+  --line-dark:#ad9663;
+  --rare:#9c3a2f;
+  --uncommon:#876523;
+  --common:#5a6a38;
+}
+body.theme-sepia header.app{
+  background:linear-gradient(180deg,#ecdfc4,#e1d2ad) !important;
+}
+
+/* ---- Nocturne: a cool teal-blue night theme (built on top of .dark) ---- */
+body.dark.theme-nocturne{
+  --paper:#10171b;
+  --paper-2:#18232a;
+  --ink:#e7eff1;
+  --ink-soft:#9db4bb;
+  --forest:#5cc0a6;
+  --forest-light:#7fd6bd;
+  --rust:#e6916b;
+  --umber:#c5a96b;
+  --gold:#e3c566;
+  --line:#27343b;
+  --line-dark:#37474f;
+  --rare:#ec8275;
+  --uncommon:#d8b54f;
+  --common:#5cc0a6;
+  background-color:#10171b !important;
+  background-image:
+    radial-gradient(circle at 18% 12%,rgba(92,192,166,.07),transparent 42%),
+    radial-gradient(circle at 85% 82%,rgba(127,174,200,.07),transparent 46%) !important;
+}
+body.dark.theme-nocturne header.app{
+  background:linear-gradient(180deg,#16242b,#0f1a1f) !important;
+}
+body.dark.theme-nocturne .thumb-wrap,
+body.dark.theme-nocturne .g-thumb{
+  background:#16222a !important;
+}
+
+/* ---- Theme picker row in Settings ---- */
+.theme-row .seg{flex-wrap:wrap;}
+.theme-row .seg button{cursor:pointer;}
