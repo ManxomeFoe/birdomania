@@ -18,6 +18,52 @@
     }
   } catch (e) {}
 
+  /* ---- 0a. Debounced persistence ----
+     The page calls save() — a full-state JSON.stringify into localStorage —
+     after EVERY Wikipedia/Commons lookup (once per bird while browsing) and on
+     every interaction. Coalesce bursts into one write. The in-memory `state`
+     stays the source of truth (load() only runs at boot, Export serializes the
+     in-memory object, and resetAllData() re-persists via save()), so deferring
+     the write is safe as long as we flush before the page is hidden/killed. */
+  (function installSaveDebounce(){
+    if (typeof save !== 'function') return;
+    var _write = save;                 // the page's real localStorage writer
+    var timer = null, dirty = false, firstDirtyAt = 0;
+    var DELAY = 400, MAX_WAIT = 1500;  // trailing debounce with bounded latency
+    function flush(){
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (!dirty) return;
+      dirty = false; firstDirtyAt = 0;
+      _write();
+    }
+    function schedule(){
+      var now = Date.now();
+      if (!dirty) { dirty = true; firstDirtyAt = now; }
+      if (now - firstDirtyAt >= MAX_WAIT) { flush(); return; }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, DELAY);
+    }
+    save = schedule;                   // rebinds the page's global declaration
+    window.save = schedule;
+    window.__birdFlushSave = flush;    // explicit flush hook (also for tests)
+    // Flush whenever the app may be backgrounded or torn down (Android app
+    // switch, screen off, reload) so no burst is ever lost.
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', function(){
+      if (document.visibilityState === 'hidden') flush();
+    });
+    // Modal-confirmed actions (data Import, trip edits, …) persist the moment
+    // the dialog closes, shrinking the crash window after e.g. "Backup
+    // restored" from ~400ms to zero.
+    if (typeof closeModal === 'function') {
+      var _closeModal = closeModal;
+      closeModal = window.closeModal = function(){
+        _closeModal.apply(this, arguments);
+        flush();
+      };
+    }
+  })();
+
   /* ---- 0. Reliable image fetching ----
      The page lazily fetches every bird's photo from Wikipedia / Wikimedia.
      On mobile a scroll-burst of hundreds of requests gets rate-limited (HTTP
@@ -75,6 +121,95 @@
         if (state.galleryCache[k] && state.galleryCache[k].ok === false) { delete state.galleryCache[k]; changed = true; }
       }
       if (changed) { save(); if (window.render) render(); }
+    } catch (e) {}
+  })();
+
+  /* ---- 0b. Lighter bird images ----
+     The page's fetchWiki() prefers originalimage.source — the FULL-RESOLUTION
+     Wikipedia photo (often several MB) — for every card thumbnail. Replace it
+     (same contract: shares _wikiPending + state.wikiCache, then save() +
+     upgradeBirdImages()) with a version that prefers the REST thumbnail
+     (~330px, 10-30x smaller). The URL is used VERBATIM — as of 2026, Wikimedia's
+     thumbnailer 400s widths outside an undocumented bucket list, so fabricating
+     a "better" width risks permanently silhouetting a bird. Detail views get
+     sharper 480px images from the Commons gallery API, which generates its
+     thumb URLs server-side. Also adds native lazy-loading to every bird <img>
+     and pre-warms the API/image-CDN connections. */
+  (function installImagePipeline(){
+    if (typeof fetchWiki !== 'function' || typeof birdImageHTML !== 'function' ||
+        typeof upgradeBirdImages !== 'function') return;
+
+    // Pre-warm TLS to the API + image hosts (first-image latency win).
+    ['https://en.wikipedia.org', 'https://upload.wikimedia.org', 'https://commons.wikimedia.org']
+      .forEach(function(origin){
+        try {
+          var l = document.createElement('link');
+          l.rel = 'preconnect'; l.href = origin; l.crossOrigin = 'anonymous';
+          document.head.appendChild(l);
+        } catch (e) {}
+      });
+
+    fetchWiki = window.fetchWiki = async function(id){
+      if (state.wikiCache[id] || _wikiPending[id]) return;
+      _wikiPending[id] = true;
+      var title = encodeURIComponent((BIRDS[id].wiki || BIRDS[id].name).replace(/ /g, '_'));
+      try {
+        var r = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + title,
+                            { headers: { Accept: 'application/json' } });
+        if (r.ok) {
+          var j = await r.json();
+          var thumb = (j.thumbnail && j.thumbnail.source) ||
+                      (j.originalimage && j.originalimage.source) || null;
+          state.wikiCache[id] = {
+            thumb: thumb,
+            page: (j.content_urls && j.content_urls.desktop) ? j.content_urls.desktop.page : null,
+            ok: !!thumb
+          };
+        } else { state.wikiCache[id] = { ok: false }; }
+      } catch (e) { state.wikiCache[id] = { ok: false }; }
+      save();
+      upgradeBirdImages(id);
+    };
+
+    // Same behaviour as the page's upgradeBirdImages, plus lazy/async attrs.
+    upgradeBirdImages = window.upgradeBirdImages = function(id){
+      var wc = state.wikiCache[id]; if (!wc || !wc.ok || !wc.thumb) return;
+      document.querySelectorAll('[data-birdimg="' + id + '"]').forEach(function(box){
+        if (state.birdPhotos[id] || (state.birdThumb && state.birdThumb[id])) return;
+        box.innerHTML = '<img loading="lazy" decoding="async" src="' + esc(wc.thumb) +
+          '" alt="' + esc(BIRDS[id].name) +
+          '" onerror="this.outerHTML=birdSVG(\'' + id + '\')"/>';
+      });
+    };
+
+    // Every <img> birdImageHTML produces gains native lazy-loading.
+    var _obih = birdImageHTML;
+    birdImageHTML = window.birdImageHTML = function(id, cls){
+      var html = (cls === undefined) ? _obih(id) : _obih(id, cls);
+      if (html && html.indexOf('<img ') === 0 && html.indexOf('loading=') === -1) {
+        html = '<img loading="lazy" decoding="async" ' + html.slice(5);
+      }
+      return html;
+    };
+
+    // One-time cleanup: earlier launches cached FULL-RES original URLs in
+    // wikiCache. Drop those entries so they refetch as 640px thumbnails.
+    // (User-chosen gallery thumbs live in state.birdThumb and are untouched.)
+    try {
+      if (!state.__thumbFix) {
+        var changed = false;
+        for (var k in state.wikiCache) {
+          var wc2 = state.wikiCache[k];
+          if (wc2 && wc2.ok && wc2.thumb &&
+              /upload\.wikimedia\.org\//.test(wc2.thumb) &&
+              wc2.thumb.indexOf('/thumb/') === -1) {
+            delete state.wikiCache[k]; changed = true;
+          }
+        }
+        state.__thumbFix = 1;
+        save();
+        if (changed && window.render) render();
+      }
     } catch (e) {}
   })();
 

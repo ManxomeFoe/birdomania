@@ -136,3 +136,13 @@ body.dark.theme-nocturne .g-thumb{
 /* ---- Theme picker row in Settings ---- */
 .theme-row .seg{flex-wrap:wrap;}
 .theme-row .seg button{cursor:pointer;}
+
+/* ---- Render performance: skip layout/paint for offscreen bird cards.
+   Big lists (Alaska = 320 cards) only pay for what's on screen while
+   scrolling. `auto` remembers each card's real size once rendered; 300px
+   approximates a 220px-wide card (4:3 thumb + text) before first render. ---- */
+.grid.birds > .card,
+.grid.photos > .card{
+  content-visibility:auto;
+  contain-intrinsic-size:auto 300px;
+}
