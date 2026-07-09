@@ -40,6 +40,28 @@ html,body{
   max-width: 100% !important;
 }
 
+/* On phone-width screens the brand row (logo + title + Export / Import /
+   Settings) needs ~500px, and the overflow-x guard above CLIPS the buttons
+   off the right edge with no way to scroll to them. Let the row wrap: the
+   page's .brand-spacer{flex:1} becomes a full-width break, so line 1 is the
+   logo + title and line 2 is the action buttons, kept right-aligned. */
+@media (max-width: 540px){
+  .brand-row{
+    flex-wrap: wrap !important;
+    row-gap: 0 !important;
+  }
+  .brand-spacer{
+    flex-basis: 100% !important;
+    height: 0 !important;
+  }
+  .brand-row .hdr-btn{
+    margin-top: 8px !important;
+  }
+  #btnExport{
+    margin-left: auto !important;
+  }
+}
+
 /* ---- Offline-images settings section ---- */
 .offline-row .offline-status{
   font-size:13px;color:var(--ink-soft);margin-top:8px;

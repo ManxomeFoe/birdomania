@@ -227,6 +227,19 @@
   };
   window.__applyAndroidInsets();
 
+  // The companion stylesheet can finish loading AFTER the page measured its
+  // sticky-header height at boot, and its narrow-screen header wrap changes
+  // that height — re-measure once the CSS is actually applied (plus a timed
+  // fallback in case the <link> already loaded before this script ran).
+  (function remeasureHeader(){
+    function sync(){ try { if (window.syncHeaderHeight) syncHeaderHeight(); } catch (e) {} }
+    try {
+      var css = document.getElementById('android-inject-css');
+      if (css) css.addEventListener('load', sync);
+    } catch (e) {}
+    setTimeout(sync, 600);
+  })();
+
   /* ---- 2. Tell the native shell which theme is active so it can pick
             light vs. dark status-bar icons. ---- */
   function reportTheme(){
