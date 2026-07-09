@@ -12,8 +12,13 @@
           HTTPS (GitHub Pages). It caches index.html + the inject files so the
           app keeps working with no connection, while still picking up pushed
           updates on the next launch. ---- */
+  // localhost counts as a secure context — allowing it means the preview
+  // server exercises the REAL service-worker paths (the https-only guard once
+  // hid an update-checker bug that only manifested with a SW active).
+  var swCapable = 'serviceWorker' in navigator &&
+      (location.protocol === 'https:' || location.hostname === 'localhost');
   try {
-    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    if (swCapable) {
       navigator.serviceWorker.register('sw.js').catch(function () {});
       // Best-effort: ask the browser not to evict this origin's storage
       // (the SW image cache + the user's IndexedDB photos) under disk
@@ -842,10 +847,21 @@
   // Revalidate every cached shell file right now. Returns true if any file
   // actually changed (ETag / Last-Modified differs), meaning a reload would
   // start the new version immediately.
+  // The probes carry ?__fresh=1, which the service worker passes straight
+  // through to the network (see sw.js) — WITHOUT it, the SW would answer each
+  // probe from the very cache being validated and the check would always
+  // report "up to date". GitHub Pages ignores query strings, so the bytes and
+  // validators are those of the canonical file.
   async function refreshWebShell(){
-    if (!('caches' in window) || location.protocol !== 'https:') return false;
+    if (!('caches' in window) || !swCapable) return false;
     var changed = false;
     try {
+      // Update the SW itself first (skipWaiting applies it right away), so a
+      // phone still running an older SW without the __fresh bypass converges.
+      try {
+        var reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      } catch (e) {}
       var names = await caches.keys();
       var name = names.filter(function(n){ return n.indexOf('birdomania-shell-') === 0; })
                       .sort().pop();
@@ -857,18 +873,20 @@
           var old = await cache.match(files[i]);
           // 'no-cache' bypasses the HTTP cache (GitHub Pages max-age=600) but
           // still sends conditional headers — an unchanged file costs a 304.
-          var res = await fetch(files[i], { cache: 'no-cache' });
+          var res = await fetch(files[i] + '?__fresh=1', { cache: 'no-cache' });
           if (!res || !res.ok || res.redirected) continue;
           var oldTag = old && (old.headers.get('etag') || old.headers.get('last-modified'));
           var newTag = res.headers.get('etag') || res.headers.get('last-modified');
           if (!old || !newTag || oldTag !== newTag) changed = true;
-          await cache.put(files[i], res);
+          await cache.put(files[i], res);   // keyed by the CANONICAL url
         } catch (e) {}
       }
-      // Pick up a changed sw.js too (skipWaiting applies it right away).
+      // A pre-bypass SW may have cached probe URLs as junk entries; sweep them.
       try {
-        var reg = await navigator.serviceWorker.getRegistration();
-        if (reg) reg.update();
+        var keys = await cache.keys();
+        for (var k = 0; k < keys.length; k++) {
+          if (keys[k].url.indexOf('__fresh') !== -1) await cache.delete(keys[k]);
+        }
       } catch (e) {}
     } catch (e) {}
     return changed;

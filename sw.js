@@ -92,6 +92,11 @@ async function pruneImages(cache) {
 self.addEventListener('fetch', function (e) {
   const req = e.request;
   const url = new URL(req.url);
+  // Update-check probes (Settings -> "Check for updates") carry ?__fresh=1:
+  // step aside entirely so they hit GitHub Pages, not this SW's cache —
+  // otherwise the check compares the cached shell against itself and always
+  // reports "up to date".
+  if (url.searchParams.has('__fresh')) return;
   // Bird thumbnails / gallery images: cache-first from IMG_CACHE.
   if (req.method === 'GET' && url.hostname === 'upload.wikimedia.org') {
     e.respondWith(imageCacheFirst(req.url));
