@@ -15,6 +15,12 @@
   try {
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').catch(function () {});
+      // Best-effort: ask the browser not to evict this origin's storage
+      // (the SW image cache + the user's IndexedDB photos) under disk
+      // pressure. Ignore the answer — it's advisory.
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().catch(function () {});
+      }
     }
   } catch (e) {}
 
@@ -75,11 +81,15 @@
     var active = 0, queue = [], MAX = 4;
     function isWiki(u){ return /\/\/[a-z0-9.-]*(wikipedia|wikimedia)\.org/i.test(u); }
     function delay(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+    // done() MUST decrement before re-pumping: a slot is only free once its
+    // job settles. (A past version passed pump directly here, never releasing
+    // the 4 slots — every wiki fetch after the first 4 hung forever.)
+    function done(){ active--; pump(); }
     function pump(){
       while (active < MAX && queue.length) {
         var job = queue.shift();
         active++;
-        job().then(pump, pump);
+        job().then(done, done);
       }
     }
     function withRetry(args){
@@ -110,12 +120,20 @@
     };
   })();
 
-  // Forget previous failures so images retry on this launch.
+  // Forget previous failures so images retry on this launch. Whenever a
+  // wikiCache entry is deleted, its _wikiPending flag must be cleared too —
+  // a stranded pending flag blocks every future fetchWiki(id) for that bird
+  // (the "first 8 birds silhouetted all session" bug).
   (function sweepNegativeCache(){
     try {
+      var pend = (typeof _wikiPending !== 'undefined') ? _wikiPending : null;
       var changed = false, k;
       for (k in state.wikiCache) {
-        if (state.wikiCache[k] && state.wikiCache[k].ok === false) { delete state.wikiCache[k]; changed = true; }
+        if (state.wikiCache[k] && state.wikiCache[k].ok === false) {
+          delete state.wikiCache[k];
+          if (pend) delete pend[k];
+          changed = true;
+        }
       }
       for (k in state.galleryCache) {
         if (state.galleryCache[k] && state.galleryCache[k].ok === false) { delete state.galleryCache[k]; changed = true; }
@@ -192,25 +210,136 @@
       return html;
     };
 
-    // One-time cleanup: earlier launches cached FULL-RES original URLs in
-    // wikiCache. Drop those entries so they refetch as 640px thumbnails.
+    // Full-res sweep — EVERY launch, twice (was a one-time __thumbFix, which
+    // let full-res entries re-enter permanently). Root cause: the page's boot
+    // code prefetches the first ~8 birds BEFORE this inject replaces
+    // fetchWiki, so those in-flight originals later write multi-MB
+    // originalimage URLs into wikiCache (measured 15.4MB for 8 birds vs
+    // ~0.3MB as thumbs) and can leave _wikiPending stranded (bird
+    // silhouetted all session). Sweep now for damage from past sessions, and
+    // again after the pre-inject fetches have landed.
     // (User-chosen gallery thumbs live in state.birdThumb and are untouched.)
-    try {
-      if (!state.__thumbFix) {
-        var changed = false;
-        for (var k in state.wikiCache) {
+    function sweepFullRes(){
+      try {
+        var pend = (typeof _wikiPending !== 'undefined') ? _wikiPending : null;
+        var changed = false, k;
+        for (k in state.wikiCache) {
           var wc2 = state.wikiCache[k];
           if (wc2 && wc2.ok && wc2.thumb &&
               /upload\.wikimedia\.org\//.test(wc2.thumb) &&
               wc2.thumb.indexOf('/thumb/') === -1) {
-            delete state.wikiCache[k]; changed = true;
+            delete state.wikiCache[k];
+            if (pend) delete pend[k];
+            changed = true;
           }
         }
-        state.__thumbFix = 1;
+        // Pending with no cache entry = stranded by a sweep or a fetch that
+        // died pre-inject; clear it so the thumbnail path can retry.
+        if (pend) {
+          for (k in pend) {
+            if (!state.wikiCache[k]) { delete pend[k]; changed = true; }
+          }
+        }
+        if (changed) { save(); if (window.render) render(); }
+      } catch (e) {}
+    }
+    sweepFullRes();
+    setTimeout(sweepFullRes, 6000);
+  })();
+
+  /* ---- 0c. Batched thumbnail warm-up ----
+     Instead of one REST summary round-trip per bird (~450 calls for the full
+     catalog, ~30s at 4-concurrent), fetch thumbnails 50 titles at a time from
+     the MediaWiki Action API (prop=pageimages) — the whole catalog lands in
+     ~10 requests / ~5s. The returned thumbnail URLs are byte-identical to the
+     REST summary's (same PageImages data, same thumbnailer buckets) and are
+     used VERBATIM per the project rule. Batches run strictly sequentially
+     (Wikimedia etiquette; also makes 429s essentially impossible). The
+     single-bird fetchWiki stays as the on-demand fallback. */
+  (function installBatchWarmup(){
+    if (typeof BIRDS === 'undefined' || typeof state === 'undefined' ||
+        typeof upgradeBirdImages !== 'function') return;
+    var API = 'https://en.wikipedia.org/w/api.php';
+    function titleFor(id){ return (BIRDS[id].wiki || BIRDS[id].name).replace(/ /g, '_'); }
+    function pageUrl(title){
+      return 'https://en.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_'));
+    }
+
+    // One batch of <= 50 bird ids. Returns false on API failure (callers stop
+    // batching; the lazy single-bird path still covers every bird).
+    async function fetchBatch(ids){
+      var pend = (typeof _wikiPending !== 'undefined') ? _wikiPending : {};
+      var byTitle = {};                       // requested title -> [bird ids]
+      ids.forEach(function(id){
+        var t = titleFor(id);
+        (byTitle[t] = byTitle[t] || []).push(id);
+        pend[id] = true;                      // dedupe vs single fetchWiki
+      });
+      try {
+        var url = API + '?action=query&prop=pageimages&piprop=thumbnail&pithumbsize=330' +
+                  '&format=json&formatversion=2&redirects=1&origin=*' +
+                  '&titles=' + encodeURIComponent(Object.keys(byTitle).join('|'));
+        var r = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var j = await r.json();
+        var q = (j && j.query) || {};
+        // Response pages come back in pageid order under CANONICAL titles;
+        // map a requested title through normalized (underscores -> spaces)
+        // then redirects (chainable) to find its page.
+        var norm = {}, redir = {};
+        (q.normalized || []).forEach(function(n){ norm[n.from] = n.to; });
+        (q.redirects  || []).forEach(function(n){ redir[n.from] = n.to; });
+        function resolve(t){
+          t = norm[t] || t;
+          for (var i = 0; i < 5 && redir[t]; i++) t = redir[t];
+          return t;
+        }
+        var pages = {};
+        (q.pages || []).forEach(function(p){ if (p && p.title) pages[p.title] = p; });
+        ids.forEach(function(id){ delete pend[id]; });
+        Object.keys(byTitle).forEach(function(reqT){
+          var p = pages[resolve(reqT)];
+          var thumb = (p && !p.missing && p.thumbnail && p.thumbnail.source) || null;
+          byTitle[reqT].forEach(function(id){
+            if (state.wikiCache[id] && state.wikiCache[id].ok) return;  // never clobber a good entry
+            state.wikiCache[id] = {
+              thumb: thumb,
+              page: (p && p.title) ? pageUrl(p.title) : null,
+              ok: !!thumb
+            };
+            upgradeBirdImages(id);            // fill any on-screen card now
+          });
+        });
         save();
-        if (changed && window.render) render();
+        return true;
+      } catch (e) {
+        ids.forEach(function(id){ delete pend[id]; });
+        return false;
       }
-    } catch (e) {}
+    }
+
+    window.__birdBatchWarmup = async function(){
+      var pend = (typeof _wikiPending !== 'undefined') ? _wikiPending : {};
+      var seen = {}, order = [];
+      function add(id){
+        if (seen[id] || !BIRDS[id] || pend[id]) return;
+        var wc = state.wikiCache[id];
+        if (wc && wc.ok) return;              // already resolved
+        seen[id] = 1; order.push(id);
+      }
+      // Tracked regions first so the user's own birds resolve in batch 1-2.
+      try {
+        (state.loadedRegions || []).forEach(function(c){
+          regionBirds(c).forEach(add);
+        });
+      } catch (e) {}
+      Object.keys(BIRDS).forEach(add);
+      for (var i = 0; i < order.length; i += 50) {
+        if (!(await fetchBatch(order.slice(i, i + 50)))) break;
+      }
+    };
+    // Kick off shortly after first paint; each batch is ~0.5s, sequential.
+    setTimeout(function(){ window.__birdBatchWarmup().catch(function(){}); }, 1500);
   })();
 
   /* ---- 1. Safe-area insets: copy the values MainActivity pushes into
