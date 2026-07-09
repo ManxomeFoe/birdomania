@@ -77,6 +77,22 @@ html,body{
   flex:0 0 auto;
 }
 
+/* ---- App-updates settings section (same look as the offline section) ---- */
+.update-row .update-status{
+  font-size:13px;color:var(--ink-soft);margin-top:8px;
+}
+.update-row .update-bar{
+  height:6px;border-radius:4px;background:var(--line);
+  overflow:hidden;margin-top:8px;display:none;
+}
+.update-row .update-bar > span{
+  display:block;height:100%;width:0;background:var(--forest-light);
+  transition:width .15s ease;
+}
+.update-row .update-actions{
+  display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;
+}
+
 /* ============================================================
    Extra colour themes (beyond the built-in light/dark).
    Applied by android-inject.js via state.prefs.theme. The app's tokens are

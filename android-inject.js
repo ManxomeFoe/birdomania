@@ -656,13 +656,220 @@
     birdSVG = window.birdSVG;
   })();
 
-  // Wrap the page's openSettings so the modal gains the theme picker + offline section.
+  /* ---- 7. App updates (check for updates) ----
+     Two layers, checked together from Settings -> "Check for updates":
+     - WEB layer: the service worker normally applies a pushed site update on
+       the SECOND launch after a push (stale-while-revalidate). The manual
+       check revalidates every cached shell file NOW (ETag compare against
+       GitHub Pages) and offers an instant restart when something changed.
+     - APK layer: when running inside the Android shell (AndroidShell bridge
+       with getAppVersion present), the latest GitHub release tag is compared
+       against the installed versionName; a newer release is downloaded by the
+       native side (progress via window.__updateEvent) and handed to the
+       system installer. In a plain browser the APK check is skipped. */
+  var UPDATE = {
+    api: 'https://api.github.com/repos/ManxomeFoe/birdomania/releases/latest',
+    apkUrl: 'https://github.com/ManxomeFoe/birdomania/releases/latest/download/Birdomania.apk',
+    page: 'https://github.com/ManxomeFoe/birdomania/releases/latest',
+    checkEveryMs: 24 * 3600 * 1000   // automatic APK checks at most once a day
+  };
+
+  // Installed APK versionName via the native bridge, or null in a browser /
+  // an older shell that predates the updater.
+  function nativeVersion(){
+    try {
+      if (window.AndroidShell && AndroidShell.getAppVersion) {
+        var v = JSON.parse(AndroidShell.getAppVersion());
+        if (v && v.versionName) return String(v.versionName);
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // numeric per-component compare of "1.10" vs "v1.9" style strings
+  function cmpVersions(a, b){
+    var pa = String(a).replace(/^v/i, '').split('.');
+    var pb = String(b).replace(/^v/i, '').split('.');
+    for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+      var na = parseInt(pa[i], 10) || 0, nb = parseInt(pb[i], 10) || 0;
+      if (na !== nb) return na < nb ? -1 : 1;
+    }
+    return 0;
+  }
+
+  // Revalidate every cached shell file right now. Returns true if any file
+  // actually changed (ETag / Last-Modified differs), meaning a reload would
+  // start the new version immediately.
+  async function refreshWebShell(){
+    if (!('caches' in window) || location.protocol !== 'https:') return false;
+    var changed = false;
+    try {
+      var names = await caches.keys();
+      var name = names.filter(function(n){ return n.indexOf('birdomania-shell-') === 0; })
+                      .sort().pop();
+      if (!name) return false;
+      var cache = await caches.open(name);
+      var files = ['./', 'index.html', 'android-inject.css', 'android-inject.js'];
+      for (var i = 0; i < files.length; i++) {
+        try {
+          var old = await cache.match(files[i]);
+          // 'no-cache' bypasses the HTTP cache (GitHub Pages max-age=600) but
+          // still sends conditional headers — an unchanged file costs a 304.
+          var res = await fetch(files[i], { cache: 'no-cache' });
+          if (!res || !res.ok || res.redirected) continue;
+          var oldTag = old && (old.headers.get('etag') || old.headers.get('last-modified'));
+          var newTag = res.headers.get('etag') || res.headers.get('last-modified');
+          if (!old || !newTag || oldTag !== newTag) changed = true;
+          await cache.put(files[i], res);
+        } catch (e) {}
+      }
+      // Pick up a changed sw.js too (skipWaiting applies it right away).
+      try {
+        var reg = await navigator.serviceWorker.getRegistration();
+        if (reg) reg.update();
+      } catch (e) {}
+    } catch (e) {}
+    return changed;
+  }
+
+  // Latest GitHub release vs the installed APK. Resolves to
+  // {tag, notes, current} when an update exists, else null.
+  async function checkApkUpdate(){
+    var cur = nativeVersion();
+    if (!cur) return null;                    // not running in the Android shell
+    var r = await fetch(UPDATE.api, { cache: 'no-store' });
+    if (r.status === 404) return null;        // no releases published yet
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    var rel = await r.json();
+    var latest = rel && rel.tag_name;
+    if (latest && cmpVersions(latest, cur) > 0) {
+      return {
+        tag: latest,
+        current: cur,
+        notes: String((rel && rel.body) || '').split('\n')[0].slice(0, 160)
+      };
+    }
+    return null;
+  }
+
+  function injectUpdateSection(settingsEl){
+    if (settingsEl.querySelector('.update-row')) return;
+    var danger = settingsEl.querySelector('.danger-zone');
+    var cur = nativeVersion();
+    var row = document.createElement('div');
+    row.className = 'set-row col update-row';
+    row.innerHTML =
+      '<div class="set-label"><div class="set-title">App updates</div>' +
+      '<div class="set-desc">' +
+      (cur ? 'You have Birdomania v' + esc(cur) + '. '
+           : '') +
+      'Checks for a newer version of the app and applies any pending website ' +
+      'update immediately. Your birds and photos are untouched by updates.</div></div>' +
+      '<div class="update-bar"><span></span></div>' +
+      '<div class="update-status"></div>' +
+      '<div class="update-actions">' +
+      '<button class="btn" id="updCheck">Check for updates</button>' +
+      '</div>';
+    if (danger) settingsEl.insertBefore(row, danger); else settingsEl.appendChild(row);
+
+    var statusEl = row.querySelector('.update-status');
+    var bar      = row.querySelector('.update-bar');
+    var fill     = row.querySelector('.update-bar > span');
+    var actions  = row.querySelector('.update-actions');
+    var checkBtn = row.querySelector('#updCheck');
+
+    function extraButton(label, onTap){
+      var old = row.querySelector('.update-extra');
+      if (old) old.remove();
+      if (!label) return;
+      var b = document.createElement('button');
+      b.className = 'btn update-extra';
+      b.textContent = label;
+      b.onclick = onTap;
+      actions.appendChild(b);
+    }
+
+    function installApkUpdate(info){
+      extraButton(null);
+      checkBtn.disabled = true;
+      bar.style.display = 'block'; fill.style.width = '0';
+      statusEl.textContent = 'Downloading v' + info.tag.replace(/^v/i, '') + '…';
+      window.__updateEvent = function(ev){
+        if (!ev) return;
+        if (ev.phase === 'progress') {
+          if (isFinite(ev.pct) && ev.pct >= 0) fill.style.width = ev.pct + '%';
+          statusEl.textContent = 'Downloading update… ' +
+            (isFinite(ev.pct) && ev.pct >= 0 ? ev.pct + '%' : '');
+        } else if (ev.phase === 'done') {
+          bar.style.display = 'none';
+          checkBtn.disabled = false;
+          statusEl.textContent = 'Download complete — opening the installer…';
+          toast('Opening the installer…');
+        } else if (ev.phase === 'error') {
+          bar.style.display = 'none';
+          checkBtn.disabled = false;
+          statusEl.textContent = 'Update failed: ' + (ev.message || 'download error') +
+            '. You can retry, or download it from GitHub in a browser.';
+          extraButton('Open GitHub', function(){ window.open(UPDATE.page, '_blank'); });
+        }
+      };
+      var res = 'err:no bridge';
+      try { res = AndroidShell.startUpdateDownload(UPDATE.apkUrl); } catch (e) { res = 'err:' + e.message; }
+      if (String(res).indexOf('ok') !== 0) {
+        bar.style.display = 'none';
+        checkBtn.disabled = false;
+        statusEl.textContent = 'Could not start the download (' + res + ')';
+      }
+    }
+
+    checkBtn.onclick = async function(){
+      checkBtn.disabled = true;
+      extraButton(null);
+      statusEl.textContent = 'Checking for updates…';
+      var webChanged = false, apk = null, failed = false;
+      try { webChanged = await refreshWebShell(); } catch (e) {}
+      try { apk = await checkApkUpdate(); } catch (e) { failed = true; }
+      checkBtn.disabled = false;
+      if (apk) {
+        statusEl.textContent = 'App update available: v' + apk.tag.replace(/^v/i, '') +
+          ' (you have v' + apk.current + ').' + (apk.notes ? ' ' + apk.notes : '');
+        extraButton('Download & install', function(){ installApkUpdate(apk); });
+      } else if (webChanged) {
+        statusEl.textContent = 'A website update was downloaded. Restart to apply it.';
+        extraButton('Restart now', function(){ location.reload(); });
+      } else if (failed) {
+        statusEl.textContent = 'Could not reach GitHub to check for app updates.';
+      } else {
+        statusEl.textContent = 'Birdomania is up to date' + (cur ? ' (v' + esc(cur) + ')' : '') + '.';
+      }
+    };
+  }
+
+  // Automatic APK check, at most once a day, only inside the Android shell
+  // (the web layer already updates itself via the service worker). Quiet
+  // unless an update actually exists.
+  (function autoCheckApk(){
+    if (!nativeVersion()) return;
+    var last = 0;
+    try { last = +localStorage.getItem('birdomania:lastApkCheck') || 0; } catch (e) {}
+    if (Date.now() - last < UPDATE.checkEveryMs) return;
+    setTimeout(function(){
+      try { localStorage.setItem('birdomania:lastApkCheck', String(Date.now())); } catch (e) {}
+      checkApkUpdate().then(function(info){
+        if (info) toast('Birdomania v' + info.tag.replace(/^v/i, '') +
+                        ' is available — install it from Settings');
+      }).catch(function(){});
+    }, 5000);
+  })();
+
+  // Wrap the page's openSettings so the modal gains the theme picker + offline
+  // section + update checker.
   if (typeof openSettings === 'function') {
     var orig = openSettings;
     window.openSettings = function(){
       orig.apply(this, arguments);
       var s = document.querySelector('#modal-root .settings');
-      if (s) { injectThemeSection(s); injectOfflineSection(s); }
+      if (s) { injectThemeSection(s); injectOfflineSection(s); injectUpdateSection(s); }
     };
     var btn = document.getElementById('btnSettings');
     if (btn) btn.onclick = window.openSettings;
