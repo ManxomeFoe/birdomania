@@ -415,6 +415,36 @@ body.dark .thumb-wrap,body.dark .g-thumb{background:#2b271f;}
 .seg button:last-child{border-right:none}
 .seg button.active{background:var(--forest);color:#fff}
 .sighting-note{font-size:13px;color:var(--ink-soft);font-style:italic;margin-top:2px}
+
+/* ---------- Field Map (bird spots) ---------- */
+.spot-map-box{background:#fffdf6;border:1px solid var(--line-dark);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+body.dark .spot-map-box{background:var(--paper-2)}
+.spot-map-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.spot-map-bar .tiny{margin-left:auto}
+.spot-map{height:52vh;min-height:300px;width:100%;background:var(--paper-2);position:relative;z-index:0}
+.spot-map-fallback{padding:30px 16px;text-align:center;color:var(--ink-soft);font-size:14px}
+.spot-pin-wrap{background:none;border:none}
+.spot-pin{position:relative;width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--pin,#2f4a3c);border:2px solid #fffdf6;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+.spot-pin::after{content:"";position:absolute;left:7px;top:7px;width:6px;height:6px;border-radius:50%;background:#fffdf6}
+.spot-pop{font-family:var(--sans);min-width:170px}
+.spot-pop b{font-size:14px}
+.spot-pop-note{font-size:12.5px;margin:4px 0;color:var(--ink-soft);white-space:pre-wrap}
+.spot-pop-actions{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.spot-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.spot-row{display:flex;align-items:center;gap:10px;background:#fffdf6;border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+body.dark .spot-row{background:var(--paper-2)}
+.spot-dot{flex:0 0 12px;width:12px;height:12px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:1.5px solid var(--line-dark)}
+.spot-row-info{flex:1;min-width:0}
+.spot-row-name{font-weight:600;font-size:14px}
+.spot-row-meta{font-size:12px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spot-row-actions{display:flex;gap:6px;flex:0 0 auto}
+/* Leaflet chrome, tinted to the app palette. */
+.spot-map .leaflet-bar a{background:var(--paper);color:var(--ink);border-bottom-color:var(--line-dark)}
+.spot-map .leaflet-bar a:hover{background:var(--paper-2)}
+.spot-map .leaflet-control-attribution{background:rgba(244,236,216,.85);color:var(--ink-soft);font-family:var(--sans)}
+body.dark .spot-map .leaflet-tile{filter:brightness(.72) contrast(1.05) saturate(.7)}
+body.dark .spot-map .leaflet-control-attribution{background:rgba(28,26,22,.8);color:var(--ink-soft)}
+body.dark .spot-map .leaflet-bar a{background:var(--paper-2);color:var(--ink)}
 </style>
 </head>
 <body>
@@ -447,6 +477,7 @@ body.dark .thumb-wrap,body.dark .g-thumb{background:#2b271f;}
     <button data-tab="stats">Stats</button>
     <button data-tab="quiz">Quiz</button>
     <button data-tab="portfolio">Portfolio</button>
+    <button data-tab="map">Map</button>
   </nav>
 </header>
 <main id="view"></main>
@@ -1065,6 +1096,7 @@ const DEFAULT_STATE={
   customRegions:{},          // code -> {name, icon, birdIds:[]}
   trips:[],                  // {id,name,region,startedAt,endedAt,active,birds:[birdId]}
   sightings:[],              // {id,birdId,region,tripId,tripName,date}
+  spots:[],                  // {id,birdId,lat,lng,note,date} — field-map pins
   birdPhotos:{},             // birdId -> imageId (IndexedDB)
   customLists:[],            // {id,name,baseRegion,birdIds:[]}
   portfolio:[],              // {id,title,description,imageId,addedAt,w,h}
@@ -2972,6 +3004,312 @@ function buildQuizImages(wrap,id){
     fetchBirdImages(id).then(()=>{if(quizState.current===id&&document.body.contains(wrap))buildQuizImages(wrap,id);});
   }
 }
+
+/* ============================================================
+   VIEW: FIELD MAP — bird spots on a real road map (Leaflet + OSM).
+   leaflet.js/.css are self-hosted next to index.html and lazy-loaded on the
+   first visit to this tab (the service worker precaches them, so the map UI
+   works offline; tiles need network unless previously viewed).
+   ============================================================ */
+let _spotMap=null,_spotMarkers={},_leafletLoad=null;
+
+function ensureLeaflet(){
+  if(window.L&&window.L.map)return Promise.resolve(true);
+  if(_leafletLoad)return _leafletLoad;
+  _leafletLoad=new Promise(res=>{
+    if(!document.getElementById("leaflet-css")){
+      const l=document.createElement("link");l.id="leaflet-css";l.rel="stylesheet";l.href="leaflet.css";
+      document.head.appendChild(l);
+    }
+    const s=document.createElement("script");s.src="leaflet.js";
+    s.onload=()=>res(true);
+    s.onerror=()=>{s.remove();_leafletLoad=null;res(false);}; // allow retry next visit
+    document.body.appendChild(s);
+  });
+  return _leafletLoad;
+}
+
+function spotBird(s){return BIRDS[s.birdId]||null;}
+function spotName(s){const b=spotBird(s);return b?dispName(b):"Bird spot";}
+// Only ever emit a validated hex colour into marker inline styles (BIRDS.col is
+// developer-authored hex today; this keeps the style-attribute sink safe even
+// if that ever changes).
+function spotCol(b){const c=b&&b.col;return (typeof c==="string"&&/^#[0-9a-fA-F]{3,8}$/.test(c))?c:"#2f4a3c";}
+function gmapsLink(lat,lng){return `https://maps.google.com/?q=${lat.toFixed(5)},${lng.toFixed(5)}`;}
+
+function spotShareText(s){
+  const b=spotBird(s);
+  const lines=[`🐦 ${b?b.name:"Bird spot"}`,`📍 ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`,`🗓️ ${fmtDate(s.date)}`];
+  if(s.note)lines.push(`📝 ${s.note}`);
+  lines.push(`🗺️ ${gmapsLink(s.lat,s.lng)}`);
+  return lines.join("\n");
+}
+function allSpotsShareText(){
+  const spots=state.spots.slice().sort((a,b)=>b.date-a.date);
+  return `🗺️ My bird spots (${spots.length})\n\n`+spots.map(spotShareText).join("\n\n")+"\n\n— shared from Birdomania";
+}
+
+/* Share plain text: native share sheet in the Android shell, Web Share API in
+   capable browsers, clipboard copy as the universal fallback. */
+function shareTextOut(text){
+  try{if(window.AndroidShell&&AndroidShell.shareText){AndroidShell.shareText(text);return;}}catch(e){}
+  if(navigator.share){navigator.share({text}).catch(()=>{});return;}
+  copyTextOut(text);
+}
+function copyTextOut(t){
+  const done=()=>toast("Copied — paste it to a friend");
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,()=>legacyCopy(t,done));}
+  else legacyCopy(t,done);
+}
+function legacyCopy(t,done){
+  const ta=document.createElement("textarea");ta.value=t;
+  ta.style.cssText="position:fixed;top:0;left:0;opacity:0";
+  document.body.appendChild(ta);ta.select();
+  let ok=false;try{ok=document.execCommand("copy");}catch(e){}
+  ta.remove();if(ok)done();else toast("Couldn't copy automatically");
+}
+
+/* Accept "64.751, -155.493", geo: URIs, Google-Maps links, or a spot shared
+   from Birdomania (uses its 🐦 line to pre-fill the species search). */
+function parseCoordsFrom(text){
+  if(!text)return null;
+  const valid=(la,ln)=>isFinite(la)&&isFinite(ln)&&Math.abs(la)<=90&&Math.abs(ln)<=180;
+  // Prefer a structured match (geo: URI, Google-Maps ?q=, or @lat,lng) — these
+  // are unambiguous, so they win over any decimal pair sitting in prose.
+  const s=text.match(/geo:(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)/i)
+    ||text.match(/[?&]q(?:uery)?=(-?\d{1,3}(?:\.\d+)?)(?:,|%2C)(-?\d{1,3}(?:\.\d+)?)/i)
+    ||text.match(/@(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)/);
+  if(s){const la=parseFloat(s[1]),ln=parseFloat(s[2]);if(valid(la,ln))return {lat:la,lng:ln};}
+  // Plain "lat, lng": scan ALL decimal pairs and take the first in valid range
+  // (so a leading out-of-range pair doesn't abort the whole parse).
+  const re=/(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/g;let mm;
+  while((mm=re.exec(text))){const la=parseFloat(mm[1]),ln=parseFloat(mm[2]);if(valid(la,ln))return {lat:la,lng:ln};}
+  return null;
+}
+
+function spotPopupHTML(s){
+  const b=spotBird(s);
+  return `<div class="spot-pop"><b>${esc(b?dispName(b):"Bird spot")}</b>`+
+    (s.note?`<div class="spot-pop-note">${esc(s.note)}</div>`:"")+
+    `<div class="tiny">${fmtDate(s.date)} · ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}</div>`+
+    `<div class="spot-pop-actions">`+
+    `<button class="btn sm" data-spot-share="${esc(s.id)}">Share</button>`+
+    (b?`<button class="btn sm ghost" data-spot-bird="${esc(s.birdId)}">Bird</button>`:"")+
+    `<button class="btn sm danger" data-spot-del="${esc(s.id)}">Delete</button></div></div>`;
+}
+
+function addSpotMarker(s){
+  if(!window.L||!_spotMap)return;
+  const b=spotBird(s);
+  const mk=L.marker([s.lat,s.lng],{icon:L.divIcon({
+    className:"spot-pin-wrap",
+    html:`<div class="spot-pin" style="--pin:${spotCol(b)}"></div>`,
+    iconSize:[24,24],iconAnchor:[12,29],popupAnchor:[0,-30]
+  })}).addTo(_spotMap);
+  mk.bindPopup(spotPopupHTML(s));
+  _spotMarkers[s.id]=mk;
+}
+
+function focusSpot(id){
+  const mk=_spotMarkers[id];
+  if(!_spotMap||!mk){toast("Map not loaded yet");return;}
+  _spotMap.setView(mk.getLatLng(),Math.max(_spotMap.getZoom(),13));
+  mk.openPopup();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function deleteSpot(id){
+  const s=state.spots.find(x=>x.id===id);if(!s)return;
+  confirmDialog("Delete this spot?",`${spotName(s)} — ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`,()=>{
+    state.spots=state.spots.filter(x=>x.id!==id);save();
+    if(_spotMarkers[id]){try{_spotMap.removeLayer(_spotMarkers[id]);}catch(e){}delete _spotMarkers[id];}
+    refreshSpotList();toast("Spot deleted");
+  });
+}
+
+function refreshSpotList(){
+  const wrap=document.getElementById("spotList");if(!wrap)return;
+  const badge=document.getElementById("spotCount");
+  const spots=(state.spots||[]).slice().sort((a,b)=>b.date-a.date);
+  if(badge)badge.textContent=spots.length?`(${spots.length})`:"";
+  wrap.innerHTML="";
+  if(!spots.length){
+    wrap.appendChild(el(`<p class="tiny" style="padding:14px;text-align:center">No spots yet. Tap anywhere on the map to mark where you found a bird — then share the exact coordinates with friends.</p>`));
+    return;
+  }
+  spots.forEach(s=>{
+    const b=spotBird(s);
+    const row=el(`<div class="spot-row">
+      <span class="spot-dot" style="background:${spotCol(b)}"></span>
+      <div class="spot-row-info">
+        <div class="spot-row-name">${esc(spotName(s))}</div>
+        <div class="spot-row-meta">${fmtDate(s.date)} · ${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}${s.note?" · "+esc(s.note):""}</div>
+      </div>
+      <div class="spot-row-actions">
+        <button class="btn sm ghost" data-a="view">View</button>
+        <button class="btn sm ghost" data-a="share">Share</button>
+        <button class="btn sm danger" data-a="del">✕</button>
+      </div></div>`);
+    row.querySelector('[data-a="view"]').onclick=()=>focusSpot(s.id);
+    row.querySelector('[data-a="share"]').onclick=()=>shareTextOut(spotShareText(s));
+    row.querySelector('[data-a="del"]').onclick=()=>deleteSpot(s.id);
+    wrap.appendChild(row);
+  });
+}
+
+function addSpotDialog(lat,lng,opts){
+  lat=+lat;lng=+lng;
+  if(!(isFinite(lat)&&isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180)){toast("Those coordinates don't look valid");return;}
+  let q=(opts&&opts.q)||"",chosen=null;
+  const acc=opts&&opts.accuracy&&opts.accuracy>30?` · ±${Math.round(opts.accuracy)} m`:"";
+  const body=el(`<div>
+    <p class="tiny" style="margin:0 0 10px">📍 ${lat.toFixed(5)}, ${lng.toFixed(5)}${acc}</p>
+    <div class="form-row"><label class="fld">Which bird did you find?</label>
+      <div class="search-wrap" style="max-width:none;margin-bottom:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input type="search" id="spotQ" placeholder="Search all birds…"></div>
+      <div class="scroll-list" id="spotBirdList" style="max-height:30vh"></div></div>
+    <div class="form-row"><label class="fld">Note (optional)</label>
+      <textarea id="spotNote" rows="2" style="width:100%" placeholder="e.g. singing male on the fence line"></textarea></div>
+  </div>`);
+  function draw(){
+    const wrap=body.querySelector("#spotBirdList");wrap.innerHTML="";
+    const ql=q.trim().toLowerCase();
+    let ids=Object.keys(BIRDS);
+    if(ql)ids=ids.filter(id=>{const b=BIRDS[id];return b.name.toLowerCase().includes(ql)||b.sci.toLowerCase().includes(ql);});
+    ids.sort((a,b)=>BIRDS[a].name.localeCompare(BIRDS[b].name));
+    ids=ids.slice(0,40);
+    if(!ids.length){wrap.appendChild(el(`<p class="tiny" style="padding:12px;text-align:center">No matches.</p>`));return;}
+    ids.forEach(id=>{
+      const b=BIRDS[id];
+      const row=el(`<div class="checkline" style="cursor:pointer${chosen===id?";background:rgba(47,74,60,.14);border-radius:8px":""}">
+        <span style="flex:1"><b>${esc(dispName(b))}</b>${dispSubInline(b)}</span>
+        <span class="pill rarity-${rsl(b.r)}">${b.r}</span></div>`);
+      row.onclick=()=>{chosen=id;draw();};
+      wrap.appendChild(row);
+    });
+  }
+  draw();
+  const foot=el(`<div style="display:flex;gap:8px"><button class="btn ghost" id="spotCancel">Cancel</button><button class="btn" id="spotSave">Save spot</button></div>`);
+  openModal({title:"New bird spot",body,foot,onMount:ov=>{
+    const qi=ov.querySelector("#spotQ");qi.value=q;qi.oninput=e=>{q=e.target.value;draw();};
+    ov.querySelector("#spotCancel").onclick=closeModal;
+    ov.querySelector("#spotSave").onclick=()=>{
+      if(!chosen){toast("Pick which bird you found");return;}
+      const note=ov.querySelector("#spotNote").value.trim();
+      const s={id:uid(),birdId:chosen,lat:+lat.toFixed(6),lng:+lng.toFixed(6),note,date:Date.now()};
+      state.spots.push(s);save();
+      closeModal();
+      toast(`${spotName(s)} spot saved`);
+      if(_spotMap){addSpotMarker(s);focusSpot(s.id);}
+      refreshSpotList();
+    };
+  }});
+}
+
+function pasteCoordsDialog(){
+  const body=el(`<div>
+    <p class="tiny" style="margin:0 0 8px">Paste coordinates ("64.751, -155.493"), a Google-Maps link, or a spot a friend shared from Birdomania.</p>
+    <textarea id="pasteBox" rows="5" style="width:100%" placeholder="🐦 Willow Ptarmigan&#10;📍 64.75110, -155.49360"></textarea>
+  </div>`);
+  const foot=el(`<div><button class="btn" id="pasteGo">Find on map</button></div>`);
+  openModal({title:"Add from coordinates",body,foot,onMount:ov=>{
+    ov.querySelector("#pasteGo").onclick=()=>{
+      const txt=ov.querySelector("#pasteBox").value;
+      const c=parseCoordsFrom(txt);
+      if(!c){toast("No valid coordinates found");return;}
+      const hint=((txt.match(/🐦\s*([^\n]+)/)||[])[1]||"").trim();
+      closeModal();
+      if(_spotMap)_spotMap.setView([c.lat,c.lng],14);
+      addSpotDialog(c.lat,c.lng,{q:hint});
+    };
+  }});
+}
+
+function locateMe(){
+  if(!navigator.geolocation){toast("Location isn't available here — tap the map instead");return;}
+  toast("Finding your location…");
+  navigator.geolocation.getCurrentPosition(p=>{
+    if(currentTab!=="map")return;   // fix arrived after the user left the tab
+    const la=p.coords.latitude,ln=p.coords.longitude;
+    if(_spotMap)_spotMap.setView([la,ln],15);
+    addSpotDialog(la,ln,{accuracy:p.coords.accuracy});
+  },err=>{
+    toast(err&&err.code===1?"Location permission denied — tap the map instead":"Couldn't get a location fix — tap the map instead");
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+}
+
+function initSpotMap(mount){
+  // Guard the double-init race: two views.map visits before leaflet.js loads
+  // both resolve ensureLeaflet() on the same mount. The first inits the map;
+  // without this the second would wipe its panes and L.map() would throw
+  // "Map container is already initialized".
+  if(mount._leaflet_id)return;
+  mount.innerHTML="";
+  const m=L.map(mount);
+  _spotMap=m;
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{
+    maxZoom:19,crossOrigin:"anonymous",
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+  }).addTo(m);
+  (state.spots||[]).forEach(addSpotMarker);
+  const mks=Object.values(_spotMarkers);
+  if(mks.length){m.fitBounds(L.featureGroup(mks).getBounds().pad(0.25),{maxZoom:12});}
+  else{m.setView([54,-115],3);} // AK + lower 48
+  // wrap() folds longitude back into ±180 — without it, panning across the
+  // date line (Attu / the western Aleutians — prime Alaska rarity turf) yields
+  // lng values like -187 that the coordinate gate would reject.
+  m.on("click",e=>{const w=e.latlng.wrap();addSpotDialog(w.lat,w.lng);});
+  // Popup action buttons live inside the map container: delegate their clicks.
+  mount.addEventListener("click",e=>{
+    const sh=e.target.closest("[data-spot-share]");
+    if(sh){const s=state.spots.find(x=>x.id===sh.dataset.spotShare);if(s)shareTextOut(spotShareText(s));return;}
+    const bd=e.target.closest("[data-spot-bird]");
+    if(bd){if(BIRDS[bd.dataset.spotBird])openBirdDetail(bd.dataset.spotBird);return;}
+    const dl=e.target.closest("[data-spot-del]");
+    if(dl){deleteSpot(dl.dataset.spotDel);return;}
+  });
+  setTimeout(()=>{try{m.invalidateSize();}catch(e){}},60);
+}
+
+views.map=function(root){
+  // render() wiped the previous container — tear down the old map instance
+  // (events, tile loaders) before building a fresh one.
+  if(_spotMap){try{_spotMap.remove();}catch(e){}_spotMap=null;}
+  _spotMarkers={};
+  if(!state.spots)state.spots=[];
+  root.appendChild(el(`<div class="view-head"><h2>Field Map</h2>
+    <p class="sub">Mark where you found each bird — save the spot, share the coordinates.</p></div>`));
+  const box=el(`<div class="spot-map-box">
+    <div class="spot-map-bar">
+      <button class="btn sm" id="spotLocate">📍 My location</button>
+      <button class="btn sm ghost" id="spotPaste">Paste coords…</button>
+      <button class="btn sm ghost" id="spotShareAll">Share all</button>
+      <span class="tiny">Tap the map to add a spot</span>
+    </div>
+    <div class="spot-map" id="spotMap"><div class="spot-map-fallback">Loading map…</div></div>
+  </div>`);
+  root.appendChild(box);
+  root.appendChild(el(`<h3 style="margin:16px 0 6px">Saved spots <span id="spotCount" class="tiny"></span></h3>`));
+  root.appendChild(el(`<div class="spot-list" id="spotList"></div>`));
+  refreshSpotList();
+  box.querySelector("#spotLocate").onclick=locateMe;
+  box.querySelector("#spotPaste").onclick=pasteCoordsDialog;
+  box.querySelector("#spotShareAll").onclick=()=>{
+    if(!state.spots.length){toast("No spots saved yet");return;}
+    shareTextOut(allSpotsShareText());
+  };
+  ensureLeaflet().then(ok=>{
+    if(currentTab!=="map")return;              // user already left the tab
+    const mount=document.getElementById("spotMap");
+    if(!mount)return;
+    if(!ok){
+      mount.innerHTML='<div class="spot-map-fallback">🗺️ The map couldn\'t load (offline?). Your saved spots are listed below and will appear on the map next time you\'re online.</div>';
+      return;
+    }
+    initSpotMap(mount);
+  });
+};
 
 /* ============================================================
    THEME (dark mode) + PWA install support

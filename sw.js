@@ -6,8 +6,9 @@
    a push). Cross-origin requests (Wikipedia / Wikimedia bird photos) are left
    untouched — the app manages those itself (live fetch + IndexedDB offline
    store). */
-const CACHE = 'birdomania-shell-v2';
-const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js'];
+const CACHE = 'birdomania-shell-v3';   // v3: + self-hosted Leaflet (Field Map tab)
+const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js',
+               'leaflet.js', 'leaflet.css'];
 
 /* Bird-image byte cache (v3): upload.wikimedia.org thumbnails are served
    cache-first from Cache Storage, so every previously-seen bird paints
@@ -16,6 +17,12 @@ const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js'];
    ahead of the app's own metadata. ~452 thumbs ≈ 8-18 MB real bytes. */
 const IMG_CACHE = 'birdomania-imgs-v1';
 const IMG_MAX = 800;   // entry cap (~38 KB avg -> ~30 MB ceiling)
+
+/* Field-map tile cache: OSM road tiles the user has actually viewed are kept
+   cache-first, so previously-browsed areas still render in the field with no
+   connection. Bounded — this must never grow into the origin's quota. */
+const TILE_CACHE = 'birdomania-tiles-v1';
+const TILE_MAX = 450;  // ~10-25 KB/tile -> ≲11 MB ceiling
 
 self.addEventListener('install', function (e) {
   self.skipWaiting();
@@ -28,10 +35,11 @@ self.addEventListener('activate', function (e) {
   e.waitUntil((async function () {
     const keys = await caches.keys();
     await Promise.all(keys.map(function (k) {
-      // Purge superseded shell caches but ALWAYS keep the image cache — if it
-      // gets deleted here on a future shell bump, every bird photo silently
-      // redownloads and nothing looks broken in online testing.
-      return (k === CACHE || k === IMG_CACHE) ? null : caches.delete(k);
+      // Purge superseded shell caches but ALWAYS keep the image + tile caches —
+      // if one gets deleted here on a future shell bump, every bird photo (or
+      // every viewed map area) silently redownloads and nothing looks broken
+      // in online testing.
+      return (k === CACHE || k === IMG_CACHE || k === TILE_CACHE) ? null : caches.delete(k);
     }));
     await self.clients.claim();
   })());
@@ -57,16 +65,17 @@ async function revalidate(req) {
   return res;
 }
 
-/* Cache-first bird images. The page's <img> requests are no-cors, but we
-   re-fetch with mode:'cors' (upload.wikimedia.org sends
-   Access-Control-Allow-Origin:*) and cache the clean cors response.
+/* Cache-first byte assets (bird images, map tiles). The page's <img> requests
+   are no-cors, but we re-fetch with mode:'cors' (upload.wikimedia.org and
+   tile.openstreetmap.org both send Access-Control-Allow-Origin:*) and cache the
+   clean cors response.
    LOAD-BEARING: never cache an opaque (no-cors) response here — Chromium
    pads each opaque cache entry to ~7 MB against the origin's storage quota
-   (anti-fingerprinting), so 450 thumbs would count as ~3 GB and trigger
+   (anti-fingerprinting), so 450 entries would count as ~3 GB and trigger
    whole-origin eviction that can destroy the user's IndexedDB photos.
    A SW may legally answer a no-cors <img> request with a cors response. */
-async function imageCacheFirst(u) {
-  const cache = await caches.open(IMG_CACHE);
+async function byteCacheFirst(u, cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
   const hit = await cache.match(u);
   if (hit) return hit;
   let res;
@@ -76,17 +85,17 @@ async function imageCacheFirst(u) {
     return fetch(u, { mode: 'no-cors' });   // passthrough, uncached
   }
   if (res && res.ok && res.type !== 'opaque') {
-    cache.put(u, res.clone()).then(function () { return pruneImages(cache); })
+    cache.put(u, res.clone()).then(function () { return pruneCache(cache, maxEntries); })
       .catch(function () {});               // quota full -> still render
   }
   return res;
 }
 
-/* Amortized FIFO cap so the image cache can't grow unbounded. */
-async function pruneImages(cache) {
+/* Amortized FIFO cap so a byte cache can't grow unbounded. */
+async function pruneCache(cache, max) {
   if (Math.random() > 0.05) return;
   const keys = await cache.keys();
-  for (let i = 0; i < keys.length - IMG_MAX; i++) await cache.delete(keys[i]);
+  for (let i = 0; i < keys.length - max; i++) await cache.delete(keys[i]);
 }
 
 self.addEventListener('fetch', function (e) {
@@ -99,7 +108,13 @@ self.addEventListener('fetch', function (e) {
   if (url.searchParams.has('__fresh')) return;
   // Bird thumbnails / gallery images: cache-first from IMG_CACHE.
   if (req.method === 'GET' && url.hostname === 'upload.wikimedia.org') {
-    e.respondWith(imageCacheFirst(req.url));
+    e.respondWith(byteCacheFirst(req.url, IMG_CACHE, IMG_MAX));
+    return;
+  }
+  // Field-map road tiles (tile.openstreetmap.org + a/b/c mirrors): cache-first
+  // so previously-viewed areas keep rendering offline.
+  if (req.method === 'GET' && /(^|\.)tile\.openstreetmap\.org$/.test(url.hostname)) {
+    e.respondWith(byteCacheFirst(req.url, TILE_CACHE, TILE_MAX));
     return;
   }
   // Only manage same-origin GETs (the app shell). Let everything else pass.
