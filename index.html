@@ -417,7 +417,7 @@ body.dark .thumb-wrap,body.dark .g-thumb{background:#2b271f;}
 .sighting-note{font-size:13px;color:var(--ink-soft);font-style:italic;margin-top:2px}
 
 /* ---------- Field Map (bird spots) ---------- */
-.spot-map-box{background:#fffdf6;border:1px solid var(--line-dark);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+.spot-map-box{position:relative;background:#fffdf6;border:1px solid var(--line-dark);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
 body.dark .spot-map-box{background:var(--paper-2)}
 .spot-map-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
 .spot-map-bar .tiny{margin-left:auto}
@@ -445,6 +445,23 @@ body.dark .spot-row{background:var(--paper-2)}
 body.dark .spot-map .leaflet-tile{filter:brightness(.72) contrast(1.05) saturate(.7)}
 body.dark .spot-map .leaflet-control-attribution{background:rgba(28,26,22,.8);color:var(--ink-soft)}
 body.dark .spot-map .leaflet-bar a{background:var(--paper-2);color:var(--ink)}
+/* Live-location "you are here" marker: a blue dot with a heading beam. */
+.you-dot-wrap{background:none;border:none}
+.you-dot{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#1a73e8;border:2.5px solid #fff;box-shadow:0 0 0 1px rgba(26,115,232,.5),0 1px 4px rgba(0,0,0,.4)}
+.you-beam{position:absolute;left:50%;top:50%;width:0;height:0;margin-left:-11px;margin-top:-40px;border-left:11px solid transparent;border-right:11px solid transparent;border-bottom:34px solid rgba(26,115,232,.45);transform-origin:50% 100%;transition:transform .12s linear;pointer-events:none}
+.you-dot-wrap.no-heading .you-beam{display:none}
+/* Map search bar + results. */
+.spot-search{display:flex;gap:6px;padding:10px 12px 0}
+.spot-search input{flex:1;min-width:0}
+.spot-results{list-style:none;margin:6px 12px 0;padding:0;max-height:34vh;overflow:auto;border:1px solid var(--line);border-radius:8px;display:none}
+.spot-results.show{display:block}
+.spot-results li{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13.5px;color:var(--ink)}
+.spot-results li:last-child{border-bottom:none}
+.spot-results li:hover{background:var(--paper-2)}
+.spot-results li .tiny{display:block;color:var(--ink-soft);margin-top:1px}
+.search-pin{background:none;border:none}
+.search-pin div{width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--gold);border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)}
+.spot-map-bar .btn.on{background:var(--rust)}
 </style>
 </head>
 <body>
@@ -1307,6 +1324,9 @@ function seenBirdIdsInRegion(code){return new Set(state.sightings.filter(s=>s.re
 let currentTab="home";
 const views={};   // tab -> render fn (assigned below)
 function render(){
+  // Stop any live GPS watch / compass listener before the view is torn down,
+  // so leaving the Map tab never leaves sensors running against a stale map.
+  if(window._teardownSpotMap)_teardownSpotMap();
   const v=document.getElementById("view");
   v.innerHTML="";
   (views[currentTab]||views.home)(v);
@@ -3012,6 +3032,8 @@ function buildQuizImages(wrap,id){
    works offline; tiles need network unless previously viewed).
    ============================================================ */
 let _spotMap=null,_spotMarkers={},_leafletLoad=null;
+// Live tracking + compass state.
+let _geoWatch=null,_youMarker=null,_accCircle=null,_follow=false,_orientHandler=null,_heading=null,_searchMarker=null,_gotFirstFix=false;
 
 function ensureLeaflet(){
   if(window.L&&window.L.map)return Promise.resolve(true);
@@ -3201,6 +3223,7 @@ function addSpotDialog(lat,lng,opts){
       state.spots.push(s);save();
       closeModal();
       toast(`${spotName(s)} spot saved`);
+      if(_geoWatch!=null)pauseFollow();   // keep the view on the just-saved spot, not the next GPS fix
       if(_spotMap){addSpotMarker(s);focusSpot(s.id);}
       refreshSpotList();
     };
@@ -3239,6 +3262,141 @@ function locateMe(){
   },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
 }
 
+/* ---- Live location tracking (you-are-here dot + accuracy ring + follow) ---- */
+function youIcon(){
+  return L.divIcon({className:"you-dot-wrap"+(_heading==null?" no-heading":""),
+    html:'<div class="you-beam" style="transform:rotate('+(_heading||0)+'deg)"></div><div class="you-dot"></div>',
+    iconSize:[16,16],iconAnchor:[8,8]});
+}
+function updateYouHeading(){
+  if(!_youMarker)return;
+  const w=_youMarker.getElement();if(!w)return;
+  w.classList.toggle("no-heading",_heading==null);
+  const beam=w.querySelector(".you-beam");
+  if(beam&&_heading!=null)beam.style.transform="rotate("+_heading+"deg)";
+}
+function onPositionFix(p){
+  if(currentTab!=="map"||!_spotMap)return;
+  const la=p.coords.latitude,ln=p.coords.longitude,acc=p.coords.accuracy||0;
+  const ll=[la,ln];
+  if(!_youMarker){_youMarker=L.marker(ll,{icon:youIcon(),zIndexOffset:1000,interactive:false}).addTo(_spotMap);}
+  else _youMarker.setLatLng(ll);
+  if(!_accCircle){_accCircle=L.circle(ll,{radius:acc,color:"#1a73e8",weight:1,fillColor:"#1a73e8",fillOpacity:.12,interactive:false}).addTo(_spotMap);}
+  else{_accCircle.setLatLng(ll);_accCircle.setRadius(acc);}
+  // GPS heading (course) is a decent fallback when the compass is unavailable.
+  if(_heading==null&&typeof p.coords.heading==="number"&&!isNaN(p.coords.heading)&&p.coords.speed>0.5){_heading=p.coords.heading;updateYouHeading();}
+  if(_follow)_spotMap.setView(ll,_gotFirstFix?_spotMap.getZoom():16);
+  _gotFirstFix=true;
+}
+function setTrackBtn(on){const b=document.getElementById("spotTrack");if(b){b.classList.toggle("on",on);b.textContent=on?"⏹ Tracking":"🛰️ Track me";}}
+function startTracking(){
+  if(!navigator.geolocation){toast("Location isn't available here");return;}
+  if(_geoWatch!=null)return;
+  _follow=true;_gotFirstFix=false;setTrackBtn(true);
+  toast("Tracking your location…");
+  _geoWatch=navigator.geolocation.watchPosition(onPositionFix,err=>{
+    if(err&&err.code===1){toast("Location permission denied");stopTracking();}
+    else toast("Waiting for a GPS fix…");
+  },{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+  startCompass();
+  // Following pauses the moment the user drags the map, so they can look around.
+  if(_spotMap)_spotMap.on("dragstart",pauseFollow);
+}
+function pauseFollow(){if(_follow){_follow=false;const b=document.getElementById("spotRecenter");if(b)b.style.display="";}}
+function recenter(){
+  _follow=true;const b=document.getElementById("spotRecenter");if(b)b.style.display="none";
+  if(_youMarker&&_spotMap)_spotMap.setView(_youMarker.getLatLng(),Math.max(_spotMap.getZoom(),16));
+}
+function stopTracking(){
+  if(_geoWatch!=null){navigator.geolocation.clearWatch(_geoWatch);_geoWatch=null;}
+  stopCompass();_follow=false;setTrackBtn(false);
+  const rb=document.getElementById("spotRecenter");if(rb)rb.style.display="none";
+  if(_spotMap)_spotMap.off("dragstart",pauseFollow);
+  if(_youMarker){try{_spotMap.removeLayer(_youMarker);}catch(e){}_youMarker=null;}
+  if(_accCircle){try{_spotMap.removeLayer(_accCircle);}catch(e){}_accCircle=null;}
+  _heading=null;
+}
+
+/* ---- Compass heading (which way the phone is pointing) ---- */
+function handleOrient(e){
+  let h=null;
+  if(typeof e.webkitCompassHeading==="number"&&!isNaN(e.webkitCompassHeading))h=e.webkitCompassHeading; // iOS: already clockwise from N
+  else if(e.absolute&&typeof e.alpha==="number")h=360-e.alpha;                                          // standard: alpha is counter-clockwise
+  if(h==null)return;
+  // Compensate for device rotation so the beam stays true if the phone is held
+  // in landscape (webkitCompassHeading is already screen-relative, so skip it).
+  if(e.webkitCompassHeading==null){const a=(screen.orientation&&screen.orientation.angle)||window.orientation||0;h=h-a;}
+  _heading=(h%360+360)%360;updateYouHeading();
+}
+function attachOrient(){
+  _orientHandler=handleOrient;
+  window.addEventListener("deviceorientationabsolute",_orientHandler,true);
+  window.addEventListener("deviceorientation",_orientHandler,true);
+}
+function startCompass(){
+  if(_orientHandler)return;
+  const DOE=window.DeviceOrientationEvent;
+  if(DOE&&typeof DOE.requestPermission==="function"){   // iOS 13+ gated on a gesture
+    DOE.requestPermission().then(r=>{if(r==="granted")attachOrient();}).catch(()=>{});
+  }else if(DOE){attachOrient();}
+}
+function stopCompass(){
+  if(_orientHandler){
+    window.removeEventListener("deviceorientationabsolute",_orientHandler,true);
+    window.removeEventListener("deviceorientation",_orientHandler,true);
+    _orientHandler=null;
+  }
+}
+
+/* ---- Location search (coords first, then OSM Nominatim geocoding) ---- */
+let _searchBusy=false,_lastSearchAt=0;
+function clearSearchResults(){const ul=document.getElementById("spotResults");if(ul){ul.classList.remove("show");ul.innerHTML="";}}
+function runSearch(q){
+  q=(q||"").trim();if(!q)return;
+  // A pasted coordinate / link jumps straight there — no network round-trip.
+  const c=parseCoordsFrom(q);
+  if(c){clearSearchResults();placeSearchResult(c.lat,c.lng,q);return;}
+  if(_searchBusy)return;
+  const now=Date.now();
+  if(now-_lastSearchAt<1100){toast("One search per second, please");return;} // Nominatim usage policy
+  _lastSearchAt=now;_searchBusy=true;
+  const ul=document.getElementById("spotResults");
+  if(ul){ul.classList.add("show");ul.innerHTML='<li class="tiny" style="cursor:default">Searching…</li>';}
+  // email= identifies the app per OSM's Nominatim usage policy, so heavy use is
+  // contacted rather than silently blocked. Browser fetch can't set User-Agent.
+  const url="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=0&email=casharrington06%40gmail.com&q="+encodeURIComponent(q);
+  fetch(url,{headers:{Accept:"application/json"}}).then(r=>r.ok?r.json():Promise.reject(r.status)).then(list=>{
+    _searchBusy=false;
+    if(currentTab!=="map")return;
+    showSearchResults(Array.isArray(list)?list:[]);
+  }).catch(()=>{_searchBusy=false;if(ul){ul.innerHTML='<li class="tiny" style="cursor:default">Search unavailable (offline?). You can paste coordinates instead.</li>';}});
+}
+function showSearchResults(list){
+  const ul=document.getElementById("spotResults");if(!ul)return;
+  ul.innerHTML="";
+  if(!list.length){ul.innerHTML='<li class="tiny" style="cursor:default">No matches. Try a nearby town, or paste coordinates.</li>';ul.classList.add("show");return;}
+  list.forEach(r=>{
+    const lat=parseFloat(r.lat),lng=parseFloat(r.lon);
+    if(!isFinite(lat)||!isFinite(lng))return;
+    const nm=r.display_name||"Result";
+    const li=el(`<li><b>${esc(nm.split(",")[0])}</b><span class="tiny">${esc(nm)}</span></li>`);
+    li.onclick=()=>{clearSearchResults();placeSearchResult(lat,lng,nm.split(",")[0]);};
+    ul.appendChild(li);
+  });
+  ul.classList.add("show");
+}
+function placeSearchResult(lat,lng,label){
+  if(!_spotMap)return;
+  if(_searchMarker){try{_spotMap.removeLayer(_searchMarker);}catch(e){}_searchMarker=null;}
+  _spotMap.setView([lat,lng],14);
+  _searchMarker=L.marker([lat,lng],{icon:L.divIcon({className:"search-pin",html:"<div></div>",iconSize:[16,16],iconAnchor:[8,15]})}).addTo(_spotMap);
+  _searchMarker.bindPopup(
+    `<div class="spot-pop"><b>${esc(label||"Location")}</b>`+
+    `<div class="tiny">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>`+
+    `<div class="spot-pop-actions"><button class="btn sm" data-search-add="1">Add bird spot here</button></div></div>`
+  ).openPopup();
+}
+
 function initSpotMap(mount){
   // Guard the double-init race: two views.map visits before leaflet.js loads
   // both resolve ensureLeaflet() on the same mount. The first inits the map;
@@ -3268,9 +3426,20 @@ function initSpotMap(mount){
     if(bd){if(BIRDS[bd.dataset.spotBird])openBirdDetail(bd.dataset.spotBird);return;}
     const dl=e.target.closest("[data-spot-del]");
     if(dl){deleteSpot(dl.dataset.spotDel);return;}
+    const sa=e.target.closest("[data-search-add]");
+    if(sa&&_searchMarker){const ll=_searchMarker.getLatLng();addSpotDialog(ll.lat,ll.lng);return;}
   });
   setTimeout(()=>{try{m.invalidateSize();}catch(e){}},60);
 }
+
+/* Stop live tracking + compass and drop the search pin. Called from render()
+   before any navigation, so sensors never run against a torn-down map. */
+function _teardownSpotMap(){
+  try{stopTracking();}catch(e){}
+  if(_searchMarker&&_spotMap){try{_spotMap.removeLayer(_searchMarker);}catch(e){}}
+  _searchMarker=null;
+}
+window._teardownSpotMap=_teardownSpotMap;
 
 views.map=function(root){
   // render() wiped the previous container — tear down the old map instance
@@ -3281,24 +3450,38 @@ views.map=function(root){
   root.appendChild(el(`<div class="view-head"><h2>Field Map</h2>
     <p class="sub">Mark where you found each bird — save the spot, share the coordinates.</p></div>`));
   const box=el(`<div class="spot-map-box">
+    <form class="spot-search" id="spotSearchForm">
+      <input type="search" id="spotSearchInput" placeholder="Search a place or paste coordinates…" enterkeyhint="search" autocomplete="off">
+      <button class="btn sm" type="submit">Search</button>
+    </form>
+    <ul class="spot-results" id="spotResults"></ul>
     <div class="spot-map-bar">
-      <button class="btn sm" id="spotLocate">📍 My location</button>
+      <button class="btn sm" id="spotTrack">🛰️ Track me</button>
+      <button class="btn sm ghost" id="spotLocate">📍 Drop pin</button>
       <button class="btn sm ghost" id="spotPaste">Paste coords…</button>
       <button class="btn sm ghost" id="spotShareAll">Share all</button>
       <span class="tiny">Tap the map to add a spot</span>
     </div>
     <div class="spot-map" id="spotMap"><div class="spot-map-fallback">Loading map…</div></div>
+    <button class="btn sm" id="spotRecenter" style="display:none;position:absolute;z-index:500;right:12px;bottom:26px">◎ Recenter</button>
   </div>`);
   root.appendChild(box);
   root.appendChild(el(`<h3 style="margin:16px 0 6px">Saved spots <span id="spotCount" class="tiny"></span></h3>`));
   root.appendChild(el(`<div class="spot-list" id="spotList"></div>`));
   refreshSpotList();
+  box.querySelector("#spotTrack").onclick=()=>{ if(_geoWatch!=null)stopTracking(); else startTracking(); };
   box.querySelector("#spotLocate").onclick=locateMe;
   box.querySelector("#spotPaste").onclick=pasteCoordsDialog;
+  box.querySelector("#spotRecenter").onclick=recenter;
   box.querySelector("#spotShareAll").onclick=()=>{
     if(!state.spots.length){toast("No spots saved yet");return;}
     shareTextOut(allSpotsShareText());
   };
+  box.querySelector("#spotSearchForm").addEventListener("submit",e=>{
+    e.preventDefault();
+    if(!_spotMap){toast("Map still loading…");return;}
+    runSearch(box.querySelector("#spotSearchInput").value);
+  });
   ensureLeaflet().then(ok=>{
     if(currentTab!=="map")return;              // user already left the tab
     const mount=document.getElementById("spotMap");
