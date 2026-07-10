@@ -106,8 +106,12 @@ self.addEventListener('fetch', function (e) {
   // otherwise the check compares the cached shell against itself and always
   // reports "up to date".
   if (url.searchParams.has('__fresh')) return;
-  // Bird thumbnails / gallery images: cache-first from IMG_CACHE.
+  // Bird thumbnails / gallery images: cache-first from IMG_CACHE. Audio
+  // recordings (bird calls) live on the same host but stream normally — don't
+  // byte-cache them: they're large, and their range (206) responses would
+  // corrupt the cache and break <audio> seeking.
   if (req.method === 'GET' && url.hostname === 'upload.wikimedia.org') {
+    if (/\.(ogg|oga|mp3|wav|opus|flac|m4a)$/i.test(url.pathname)) return;
     e.respondWith(byteCacheFirst(req.url, IMG_CACHE, IMG_MAX));
     return;
   }
