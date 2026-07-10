@@ -112,6 +112,23 @@ label.fld{display:block;font-size:12px;font-weight:700;letter-spacing:.5px;text-
 .grid.birds{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
 .grid.regions{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
 .grid.photos{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+/* grid density modes: default 1-across comfortable, .d2 medium, .d3 compact */
+.grid.birds.d2,.grid.photos.d2{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
+.grid.birds.d3,.grid.photos.d3{grid-template-columns:repeat(auto-fill,minmax(95px,1fr));gap:9px}
+.grid.d2 .card .body{padding:8px 10px 10px}
+.grid.d2 .card .name{font-size:14px}
+.grid.d2 .card .sci{font-size:11px}
+.grid.d2 .card .meta{gap:4px;margin-top:6px}
+.grid.d3 .card{border-radius:9px}
+.grid.d3 .card .body{padding:6px 8px 8px}
+.grid.d3 .card .name{font-size:11.5px}
+.grid.d3 .card .sci,.grid.d3 .card .meta{display:none}
+.grid.d3 .card .meta:has(button){display:flex;gap:4px;margin-top:5px} /* keep action rows (✓ Got it, ✎ Edit) usable in compact mode */
+.grid.d3 .card .corner-x{width:20px;height:20px;font-size:11px;top:5px;right:5px}
+.grid-toggle{width:38px;height:38px;flex:0 0 auto;border-radius:8px;background:#fffdf6;border:1px solid var(--line-dark);color:var(--forest);display:inline-flex;align-items:center;justify-content:center;transition:.15s;cursor:pointer}
+.grid-toggle:hover{background:rgba(47,74,60,.07);border-color:var(--forest)}
+body.dark .grid-toggle{background:var(--paper-2);color:var(--ink)}
+body.dark .grid-toggle:hover{background:rgba(127,174,146,.12)}
 .card{
   background:#fdfaf0;border:1px solid var(--line);border-radius:12px;overflow:hidden;
   box-shadow:var(--shadow);position:relative;transition:transform .15s,box-shadow .15s;
@@ -1205,6 +1222,7 @@ const DEFAULT_STATE={
   wikiCache:{},              // birdId -> {thumb, page, ok}
   galleryCache:{},           // birdId -> {ok, photos:[{src,full,caption,credit,page}]}
   birdThumb:{},              // birdId -> chosen profile thumbnail {kind:'user'|'url'|'svg', ref?, src?}
+  gridDensity:1,             // list/portfolio card size: 1 comfortable, 2 medium, 3 compact
   prefs:{theme:"light",nameMode:"both"}  // user preferences (theme; nameMode: 'common'|'sci'|'both')
 };
 let state=load();
@@ -1214,6 +1232,21 @@ function load(){
 }
 function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(state));}catch(e){toast("Could not save — storage may be full");}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+/* ----- grid density: 1 comfortable / 2 medium / 3 compact ----- */
+function gridDensity(){const d=state.gridDensity;return d===2||d===3?d:1;}
+function densityClass(){const d=gridDensity();return d>1?" d"+d:"";}
+const DENSITY_ICON={
+  1:'<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
+  2:'<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">'+[1.5,8.7].map(y=>[1.5,8.7].map(x=>`<rect x="${x}" y="${y}" width="5.8" height="5.8" rx="1.2" fill="currentColor"/>`).join("")).join("")+'</svg>',
+  3:'<svg width="17" height="17" viewBox="0 0 16 16" aria-hidden="true">'+[1.5,6.2,10.9].map(y=>[1.5,6.2,10.9].map(x=>`<rect x="${x}" y="${y}" width="3.6" height="3.6" rx="0.9" fill="currentColor"/>`).join("")).join("")+'</svg>'
+};
+// icon shows the layout you'll switch TO on tap
+function gridToggleBtn(){
+  const cur=gridDensity(),next=cur%3+1;
+  const b=el(`<button class="grid-toggle" title="Grid: ${cur}-across — tap for ${next}-across" aria-label="Change grid size">${DENSITY_ICON[next]}</button>`);
+  b.onclick=()=>{state.gridDensity=next;save();render();};
+  return b;
+}
 /* ----- bird name display mode (common / scientific / both) ----- */
 function nameMode(){return (state.prefs&&state.prefs.nameMode)||"both";}
 // primary (heading) name for a bird
@@ -1917,6 +1950,7 @@ views.seen=function(root){
   const yearSeg=tb.querySelector("#seenYear");
   if(yearSeg)yearSeg.querySelectorAll("button").forEach(btn=>btn.onclick=()=>{const y=btn.dataset.y;seenState.year=y==="ALL"?"ALL":parseInt(y,10);render();});
   tb.querySelector("#addSeen").onclick=addSeenManuallyDialog;
+  tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
   let rows=state.sightings.slice().sort((a,b)=>b.date-a.date);
@@ -1936,7 +1970,7 @@ views.seen=function(root){
   });
   // groups are already in latest-first order because rows were sorted by date desc
   root.appendChild(el(`<div class="count-badge" style="margin-bottom:12px">${groups.length} species · ${rows.length} sighting${rows.length===1?"":"s"}${seenState.region!=="ALL"?" in "+regionName(seenState.region):""}${seenState.year!=="ALL"?" · "+seenState.year:""}</div>`));
-  const grid=el(`<div class="grid birds"></div>`);
+  const grid=el(`<div class="grid birds${densityClass()}"></div>`);
   groups.forEach(g=>grid.appendChild(seenCard(g)));
   root.appendChild(grid);
 };
@@ -2139,6 +2173,7 @@ views.lists=function(root){
       state.customLists=state.customLists.filter(l=>l.id!==customObj.id);listState.region=null;save();render();toast("List deleted");});
     fb.append(editBtn,delBtn);
   }
+  fb.appendChild(gridToggleBtn());
   root.appendChild(fb);
 
   const q=listState.q.trim().toLowerCase();
@@ -2155,7 +2190,7 @@ views.lists=function(root){
   }else if(filtered.length===0){
     root.appendChild(emptyState("🔍","No matches","No birds match your search and filters.",null));
   }else{
-    const grid=el(`<div class="grid birds"></div>`);
+    const grid=el(`<div class="grid birds${densityClass()}"></div>`);
     filtered.forEach(id=>grid.appendChild(listCard(id,seen.has(id))));
     root.appendChild(grid);
   }
@@ -2666,13 +2701,14 @@ views.portfolio=function(root){
     <button class="btn rust" id="upload">＋ Upload a photo</button>
   </div>`);
   tb.querySelector("#upload").onclick=()=>{_pendingPhoto={kind:"portfolio"};document.getElementById("filePicker").click();};
+  tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
   if(state.portfolio.length===0){
     root.appendChild(emptyState("📷","Your portfolio is empty","Upload your bird photographs — they're stored at original quality and you can open any of them full-size.","Upload a photo",()=>{_pendingPhoto={kind:"portfolio"};document.getElementById("filePicker").click();}));
     return;
   }
-  const grid=el(`<div class="grid photos"></div>`);
+  const grid=el(`<div class="grid photos${densityClass()}"></div>`);
   const ordered=state.portfolio.slice().sort((a,b)=>b.addedAt-a.addedAt);
   ordered.forEach((p,i)=>grid.appendChild(portfolioCard(p,ordered,i)));
   root.appendChild(grid);
@@ -2843,6 +2879,7 @@ views.targets=function(root){
       <select id="tRegion">${loaded.map(c=>`<option value="${c}" ${code===c?"selected":""}>${regionIcon(c)} ${esc(regionName(c))}</option>`).join("")}</select></div>
   </div>`);
   tb.querySelector("#tRegion").onchange=e=>{targetState.region=e.target.value;targetState.q="";render();};
+  tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
   const total=all.length,got=all.length-all.filter(id=>!seen.has(id)).length;
@@ -2859,7 +2896,7 @@ views.targets=function(root){
     root.appendChild(emptyState("🏆",q?"No matches":"All found!",q?"No targets match your search.":`You've logged every bird on the ${regionName(code)} checklist. Incredible.`,null));
     return;
   }
-  const grid=el(`<div class="grid birds"></div>`);
+  const grid=el(`<div class="grid birds${densityClass()}"></div>`);
   targets.forEach(id=>grid.appendChild(targetCard(id,code)));
   root.appendChild(grid);
 };

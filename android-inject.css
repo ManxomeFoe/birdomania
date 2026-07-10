@@ -184,3 +184,7 @@ body.dark.theme-nocturne .g-thumb{
   content-visibility:auto;
   contain-intrinsic-size:auto 300px;
 }
+/* Density modes shrink cards — keep the pre-render size estimate close to
+   reality or big lists get an inflated scroll height that jumps while scrolling. */
+.grid.d2 > .card{contain-intrinsic-size:auto 195px;}
+.grid.d3 > .card{contain-intrinsic-size:auto 115px;}
