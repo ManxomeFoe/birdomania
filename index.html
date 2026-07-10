@@ -3033,7 +3033,7 @@ function buildQuizImages(wrap,id){
    ============================================================ */
 let _spotMap=null,_spotMarkers={},_leafletLoad=null;
 // Live tracking + compass state.
-let _geoWatch=null,_youMarker=null,_accCircle=null,_follow=false,_orientHandler=null,_heading=null,_searchMarker=null,_gotFirstFix=false;
+let _geoWatch=null,_youMarker=null,_accCircle=null,_follow=false,_orientHandler=null,_heading=null,_searchMarker=null,_gotFirstFix=false,_geoDenied=false;
 
 function ensureLeaflet(){
   if(window.L&&window.L.map)return Promise.resolve(true);
@@ -3288,15 +3288,18 @@ function onPositionFix(p){
   if(_follow)_spotMap.setView(ll,_gotFirstFix?_spotMap.getZoom():16);
   _gotFirstFix=true;
 }
-function setTrackBtn(on){const b=document.getElementById("spotTrack");if(b){b.classList.toggle("on",on);b.textContent=on?"⏹ Tracking":"🛰️ Track me";}}
-function startTracking(){
-  if(!navigator.geolocation){toast("Location isn't available here");return;}
+// Tracking starts automatically when the map opens (auto=true). auto softens
+// the messaging: no "tracking…" toast, and after a denial we don't re-prompt on
+// every visit (only an explicit action would).
+function startTracking(auto){
+  if(!navigator.geolocation){if(!auto)toast("Location isn't available here");return;}
   if(_geoWatch!=null)return;
-  _follow=true;_gotFirstFix=false;setTrackBtn(true);
-  toast("Tracking your location…");
+  if(auto&&_geoDenied)return;
+  _follow=true;_gotFirstFix=false;
+  if(!auto)toast("Tracking your location…");
   _geoWatch=navigator.geolocation.watchPosition(onPositionFix,err=>{
-    if(err&&err.code===1){toast("Location permission denied");stopTracking();}
-    else toast("Waiting for a GPS fix…");
+    if(err&&err.code===1){_geoDenied=true;toast("Location is off — enable it for live tracking, or tap the map to add a spot");stopTracking();}
+    else if(!auto)toast("Waiting for a GPS fix…");
   },{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
   startCompass();
   // Following pauses the moment the user drags the map, so they can look around.
@@ -3309,7 +3312,7 @@ function recenter(){
 }
 function stopTracking(){
   if(_geoWatch!=null){navigator.geolocation.clearWatch(_geoWatch);_geoWatch=null;}
-  stopCompass();_follow=false;setTrackBtn(false);
+  stopCompass();_follow=false;
   const rb=document.getElementById("spotRecenter");if(rb)rb.style.display="none";
   if(_spotMap)_spotMap.off("dragstart",pauseFollow);
   if(_youMarker){try{_spotMap.removeLayer(_youMarker);}catch(e){}_youMarker=null;}
@@ -3411,9 +3414,9 @@ function initSpotMap(mount){
     attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
   }).addTo(m);
   (state.spots||[]).forEach(addSpotMarker);
-  const mks=Object.values(_spotMarkers);
-  if(mks.length){m.fitBounds(L.featureGroup(mks).getBounds().pad(0.25),{maxZoom:12});}
-  else{m.setView([54,-115],3);} // AK + lower 48
+  // A neutral default only until the first GPS fix recenters on the user (the
+  // map is meant to open on "you are here"). Spots stay plotted as markers.
+  m.setView([54,-115],3); // AK + lower 48
   // wrap() folds longitude back into ±180 — without it, panning across the
   // date line (Attu / the western Aleutians — prime Alaska rarity turf) yields
   // lng values like -187 that the coordinate gate would reject.
@@ -3430,6 +3433,7 @@ function initSpotMap(mount){
     if(sa&&_searchMarker){const ll=_searchMarker.getLatLng();addSpotDialog(ll.lat,ll.lng);return;}
   });
   setTimeout(()=>{try{m.invalidateSize();}catch(e){}},60);
+  startTracking(true);   // live tracking is on by default; first fix centers the map on the user
 }
 
 /* Stop live tracking + compass and drop the search pin. Called from render()
@@ -3456,11 +3460,10 @@ views.map=function(root){
     </form>
     <ul class="spot-results" id="spotResults"></ul>
     <div class="spot-map-bar">
-      <button class="btn sm" id="spotTrack">🛰️ Track me</button>
-      <button class="btn sm ghost" id="spotLocate">📍 Drop pin</button>
+      <button class="btn sm" id="spotLocate">📍 Bird here</button>
       <button class="btn sm ghost" id="spotPaste">Paste coords…</button>
       <button class="btn sm ghost" id="spotShareAll">Share all</button>
-      <span class="tiny">Tap the map to add a spot</span>
+      <span class="tiny">🛰️ Live tracking on · tap the map to add a spot</span>
     </div>
     <div class="spot-map" id="spotMap"><div class="spot-map-fallback">Loading map…</div></div>
     <button class="btn sm" id="spotRecenter" style="display:none;position:absolute;z-index:500;right:12px;bottom:26px">◎ Recenter</button>
@@ -3469,7 +3472,6 @@ views.map=function(root){
   root.appendChild(el(`<h3 style="margin:16px 0 6px">Saved spots <span id="spotCount" class="tiny"></span></h3>`));
   root.appendChild(el(`<div class="spot-list" id="spotList"></div>`));
   refreshSpotList();
-  box.querySelector("#spotTrack").onclick=()=>{ if(_geoWatch!=null)stopTracking(); else startTracking(); };
   box.querySelector("#spotLocate").onclick=locateMe;
   box.querySelector("#spotPaste").onclick=pasteCoordsDialog;
   box.querySelector("#spotRecenter").onclick=recenter;
