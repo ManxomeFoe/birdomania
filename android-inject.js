@@ -8,6 +8,28 @@
   if (window.__birdomaniaInjected) return;
   window.__birdomaniaInjected = true;
 
+  /* ---- Offline-backup banner ----
+     When the native shell falls back to the bundled file:// copy (true first
+     launch with no network), everything here runs against a SEPARATE storage
+     bucket and an app snapshot frozen at APK-build time. Say so loudly —
+     without this banner, a birder with months of data who somehow lands here
+     reads it as "all my data is gone" (it happened). The shell returns to the
+     live app automatically when connectivity is back.
+     (window.__forceFallbackBanner is a preview-only test hook.) ---- */
+  if (location.protocol === 'file:' || window.__forceFallbackBanner) {
+    try {
+      var bn = document.createElement('div');
+      bn.id = 'offline-backup-banner';
+      bn.innerHTML =
+        '<b>📴 Offline backup copy</b> — for browsing the field guide only. ' +
+        'Anything you record here won’t carry over, and your real data is NOT ' +
+        'lost: the full app returns automatically once you’re online.' +
+        '<button id="obbClose" aria-label="Dismiss">✕</button>';
+      document.body.appendChild(bn);
+      bn.querySelector('#obbClose').onclick = function () { bn.remove(); };
+    } catch (e) {}
+  }
+
   /* ---- Offline app shell: register the service worker when served over
           HTTPS (GitHub Pages). It caches index.html + the inject files so the
           app keeps working with no connection, while still picking up pushed
