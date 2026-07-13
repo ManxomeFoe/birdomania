@@ -1794,23 +1794,24 @@ function editTripDialog(tripId){
       <input type="datetime-local" id="etEnd" value="${tsToLocal(t.endedAt||t.startedAt)}" style="width:100%"></div>`}
     <p class="tiny">Renaming the trip or changing its region also updates the sightings recorded on it.</p>
   </div>`);
-  const foot=el(`<div style="display:flex;gap:8px"><button class="btn ghost" id="etCancel">Cancel</button><button class="btn" id="etSave">Save changes</button></div>`);
+  const foot=el(`<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="etCancel">Cancel</button><button class="btn ghost" id="etBirds">🐦 Edit birds…</button><button class="btn" id="etSave">Save changes</button></div>`);
   openModal({title:"Edit trip",body,foot,onMount:ov=>{
-    ov.querySelector("#etCancel").onclick=closeModal;
-    ov.querySelector("#etSave").onclick=()=>{
+    // Validate + write the dialog's fields onto the trip. Returns false (with
+    // a toast) when a field is invalid. Shared by Save and "Edit birds…".
+    function applyEdits(){
       const name=ov.querySelector("#etName").value.trim()||t.name;
       const region=ov.querySelector("#etRegion").value||t.region;
       const startRaw=ov.querySelector("#etStart").value;
       const start=new Date(startRaw).getTime();
-      if(!isFinite(start)){toast("That start time doesn't look valid");return;}
-      if(start>Date.now()){toast("The trip can't start in the future");return;}
+      if(!isFinite(start)){toast("That start time doesn't look valid");return false;}
+      if(start>Date.now()){toast("The trip can't start in the future");return false;}
       const startChanged=startRaw!==tsToLocal(t.startedAt);
       let end=t.endedAt,endChanged=false;
       if(!t.active){
         const endRaw=ov.querySelector("#etEnd").value;
         end=new Date(endRaw).getTime();
-        if(!isFinite(end)){toast("That end time doesn't look valid");return;}
-        if(end<start){toast("The trip can't end before it starts");return;}
+        if(!isFinite(end)){toast("That end time doesn't look valid");return false;}
+        if(end<start){toast("The trip can't end before it starts");return false;}
         endChanged=endRaw!==tsToLocal(t.endedAt||t.startedAt);
       }
       t.name=name;t.region=region;
@@ -1824,7 +1825,19 @@ function editTripDialog(tripId){
       }
       // Keep the denormalised copies on this trip's sightings in step.
       state.sightings.forEach(s=>{if(s.tripId===t.id){s.tripName=name;s.region=region;}});
-      save();closeModal();render();toast("Trip updated");
+      save();
+      return true;
+    }
+    ov.querySelector("#etCancel").onclick=closeModal;
+    ov.querySelector("#etSave").onclick=()=>{
+      if(!applyEdits())return;
+      closeModal();render();toast("Trip updated");
+    };
+    // Add/remove this trip's birds — applies pending field edits first so a
+    // typed-but-unsaved name isn't lost when the birds dialog replaces this one.
+    ov.querySelector("#etBirds").onclick=()=>{
+      if(!applyEdits())return;
+      addBirdToTripDialog(t.id);
     };
   }});
 }
@@ -1886,7 +1899,11 @@ function recordSighting({birdId,region,tripId,tripName,count,notes,date}){
 function logBirdToTrip(tripId,birdId){
   const t=state.trips.find(x=>x.id===tripId);if(!t||t.birds.includes(birdId))return;
   t.birds.push(birdId);
-  recordSighting({birdId,region:t.region,tripId:t.id,tripName:t.name});
+  // Birds added to a FINISHED trip are dated to the trip, not to "now" —
+  // otherwise a bird slotted into last month's outing pollutes this month's
+  // year list and stats.
+  recordSighting({birdId,region:t.region,tripId:t.id,tripName:t.name,
+                  date:t.active?Date.now():(t.endedAt||t.startedAt)});
 }
 /* Count helpers for the trip-logging dialog's per-row number box. They target
    the newest sighting of that species on that trip. */
