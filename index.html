@@ -1636,6 +1636,12 @@ views.home=function(root){
     <div class="stat"><span class="big">${fmtDur(totalHours)||"0:00"}</span><small>Time afield</small></div>
   </div>`));
 
+  // Streak pill — only when a streak is alive, so it never adds clutter at zero
+  const st=streakStats();
+  if(st.cur>=2){
+    root.appendChild(el(`<div style="text-align:center;margin:-4px 0 14px"><span class="pill" style="background:rgba(233,201,105,.25);color:var(--ink)">🔥 ${st.cur}-day birding streak${st.today?"":" — log a bird today to keep it alive"}</span></div>`));
+  }
+
   root.appendChild(el(`<div class="view-head" style="margin:8px 0 14px"><h3 style="font-size:19px;color:var(--ink)">By region</h3></div>`));
 
   if(loaded.length===0){
@@ -3330,6 +3336,7 @@ views.stats=function(root){
   const byDay={};sightings.forEach(s=>{const k=new Date(s.date).toDateString();(byDay[k]=byDay[k]||new Set()).add(s.birdId);});
   let bigDay={n:0,k:""};Object.entries(byDay).forEach(([k,set])=>{if(set.size>bigDay.n)bigDay={n:set.size,k};});
 
+  const st=streakStats();
   const tiles=[
     ["Life list",species.size,"species"],
     ["This year",yearSpecies.size,`in ${thisYear}`],
@@ -3340,6 +3347,8 @@ views.stats=function(root){
     ["Trips",state.trips.length,"logged"],
     ["Time afield",fmtDur(totalHours)||"0:00","h:mm:ss"],
     ["Biggest day",bigDay.n,bigDay.k?new Date(bigDay.k).toLocaleDateString(undefined,{month:"short",day:"numeric"}):"—"],
+    ["🔥 Streak",st.cur,st.cur?(st.today?"days in a row":"days — log a bird today"):"days in a row"],
+    ["Best streak",st.best,"days in a row"],
   ];
   const grid=el(`<div class="stat-grid"></div>`);
   tiles.forEach(([l,v,sub])=>grid.appendChild(el(`<div class="stat-tile"><div class="v">${v}</div><div class="l">${esc(l)} · ${esc(String(sub))}</div></div>`)));
@@ -3390,6 +3399,28 @@ function buildHeatmap(){
   const out=el(`<div></div>`);out.appendChild(wrap);
   out.appendChild(el(`<div class="heat-legend">Less <span class="hm-cell"></span><span class="hm-cell l1"></span><span class="hm-cell l2"></span><span class="hm-cell l3"></span><span class="hm-cell l4"></span> More</div>`));
   return out;
+}
+/* ----- day streaks: consecutive local-calendar days with ≥1 sighting -----
+   Day keys are integers (20260713); stepping via new Date(y,m,d±1) keeps runs
+   correct across DST shifts, unlike dividing timestamps by 86400000. */
+function dayKey(d){return d.getFullYear()*10000+(d.getMonth()+1)*100+d.getDate();}
+function shiftDayKey(k,delta){return dayKey(new Date(Math.floor(k/10000),Math.floor(k/100)%100-1,k%100+delta));}
+function streakStats(){
+  const days=new Set();
+  state.sightings.forEach(s=>days.add(dayKey(new Date(s.date))));
+  let best=0;
+  days.forEach(k=>{
+    if(days.has(shiftDayKey(k,-1)))return;   // only measure from a run's first day
+    let len=1,c=k;
+    while(days.has(c=shiftDayKey(c,1)))len++;
+    if(len>best)best=len;
+  });
+  // the current streak stays alive through today even before today's first bird
+  const today=dayKey(new Date());
+  const anchor=days.has(today)?today:(days.has(shiftDayKey(today,-1))?shiftDayKey(today,-1):null);
+  let cur=0;
+  if(anchor!=null){cur=1;let c=anchor;while(days.has(c=shiftDayKey(c,-1)))cur++;}
+  return {cur,best,today:days.has(today)};
 }
 function exportLifeListCSV(){
   if(state.sightings.length===0){toast("No sightings to export");return;}
@@ -4008,6 +4039,130 @@ function placeSearchResult(lat,lng,label){
   ).openPopup();
 }
 
+/* ============================================================
+   eBird — 🔭 Nearby: recent real-world sightings around the map centre.
+   Uses the user's own free eBird API key (ebird.org/api/keygen), stored
+   only in state.prefs.ebirdKey on this device; every fetch is a user tap.
+   API responses are UNTRUSTED remote data — esc() at every HTML sink.
+   ============================================================ */
+const NEARBY_KM=30,NEARBY_DAYS=7;
+let _sciIndex=null,_nearbyBusy=false;
+function birdBySci(sci){
+  if(!_sciIndex){_sciIndex={};Object.keys(BIRDS).forEach(id=>{_sciIndex[BIRDS[id].sci.toLowerCase()]=id;});}
+  const id=_sciIndex[String(sci||"").trim().toLowerCase()];
+  return id&&realBird(id)?id:null;
+}
+function ebirdKey(){return (state.prefs&&typeof state.prefs.ebirdKey==="string")?state.prefs.ebirdKey.trim():"";}
+function kmBetween(la1,ln1,la2,ln2){
+  const r=x=>x*Math.PI/180,R=6371;
+  const h=Math.sin(r(la2-la1)/2)**2+Math.cos(r(la1))*Math.cos(r(la2))*Math.sin(r(ln2-ln1)/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+// eBird's obsDt is "2026-07-13 09:42" in the OBSERVER's local time, no offset;
+// for sightings within 30 km, reading it as our local time is correct.
+function nearbyWhen(dt){
+  const m=/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}:\d{2}))?/.exec(String(dt||""));
+  if(!m)return "";
+  const d=new Date(+m[1],+m[2]-1,+m[3]);
+  const today=new Date();today.setHours(0,0,0,0);
+  const diff=Math.round((today-d)/86400000);
+  if(diff<=0)return "Today"+(m[4]?" "+m[4]:"");
+  if(diff===1)return "Yesterday";
+  return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+}
+function ebirdKeyDialog(then){
+  const body=el(`<div>
+    <p style="margin:0 0 10px">🔭 Nearby shows real recent sightings from <b>eBird</b>, reported by birders around wherever the map is centred.</p>
+    <p style="margin:0 0 10px">It needs your own free eBird API key — a one-time setup:</p>
+    <ol style="margin:0 0 12px;padding-left:20px;font-size:13px;line-height:1.6">
+      <li>Sign in (or make a free account) at <a href="https://ebird.org/api/keygen" target="_blank" rel="noopener">ebird.org/api/keygen</a></li>
+      <li>Copy the key it gives you</li>
+      <li>Paste it below — it stays on this device only</li>
+    </ol>
+    <input type="text" id="ebKeyIn" placeholder="Paste your eBird API key" autocomplete="off" style="width:100%">
+  </div>`);
+  const foot=el(`<div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="btn ghost" id="ebKeyCancel">Cancel</button>
+    <button class="btn" id="ebKeySave">Save &amp; search</button></div>`);
+  openModal({title:"Connect eBird",body,foot,onMount:ov=>{
+    const inp=ov.querySelector("#ebKeyIn");
+    ov.querySelector("#ebKeyCancel").onclick=closeModal;
+    ov.querySelector("#ebKeySave").onclick=()=>{
+      const k=inp.value.trim();
+      if(!k){toast("Paste a key first");return;}
+      if(!state.prefs)state.prefs={};
+      state.prefs.ebirdKey=k;save();
+      closeModal();
+      if(then)then();
+    };
+    inp.focus();
+  }});
+}
+function fetchNearby(){
+  if(_nearbyBusy)return;
+  const key=ebirdKey();
+  if(!key){ebirdKeyDialog(fetchNearby);return;}
+  if(!_spotMap){toast("Map still loading…");return;}
+  const c=_spotMap.getCenter().wrap();
+  // eBird accepts at most 2 decimal places — which also keeps a precise GPS
+  // position out of the request URL (~1 km fuzz against a 30 km radius).
+  const lat=c.lat.toFixed(2),lng=c.lng.toFixed(2);
+  _nearbyBusy=true;
+  const busy=on=>{const b=document.getElementById("spotNearby");if(b){b.disabled=on;b.textContent=on?"🔭 Searching…":"🔭 Nearby";}};
+  busy(true);
+  fetch(`https://api.ebird.org/v2/data/obs/geo/recent?lat=${lat}&lng=${lng}&dist=${NEARBY_KM}&back=${NEARBY_DAYS}&includeProvisional=true`,
+    {headers:{"X-eBirdApiToken":key}})
+    .then(r=>{if(r.status===401||r.status===403)throw "auth";if(!r.ok)throw r.status;return r.json();})
+    .then(list=>{
+      _nearbyBusy=false;busy(false);
+      if(currentTab!=="map")return;
+      showNearbyDialog(Array.isArray(list)?list:[],+lat,+lng);
+    })
+    .catch(e=>{
+      _nearbyBusy=false;busy(false);
+      if(e==="auth"){toast("eBird rejected that key");ebirdKeyDialog(fetchNearby);}
+      else toast("Couldn't reach eBird — try again when you're online");
+    });
+}
+function showNearbyDialog(list,lat,lng){
+  const seen=seenBirdIds();
+  const rows=list.filter(o=>o&&o.sciName&&isFinite(o.lat)&&isFinite(o.lng)).map(o=>{
+    const id=birdBySci(o.sciName);
+    return {id,name:String(o.comName||o.sciName),lat:o.lat,lng:o.lng,
+      loc:String(o.locName||""),when:nearbyWhen(o.obsDt),n:+o.howMany||0,
+      km:kmBetween(lat,lng,o.lat,o.lng),lifer:!!id&&!seen.has(id)};
+  });
+  rows.sort((a,b)=>(b.lifer-a.lifer)||(a.km-b.km));
+  const lifers=rows.filter(r=>r.lifer).length;
+  const body=el(`<div>
+    <p class="tiny" style="margin:0 0 10px">${rows.length} species reported within ${NEARBY_KM} km of the map centre in the last ${NEARBY_DAYS} days${lifers?` — <b>⭐ ${lifers} would be ${lifers===1?"a lifer":"lifers"}</b>`:""}.</p>
+    <div id="nearbyList" style="display:flex;flex-direction:column;gap:6px"></div>
+  </div>`);
+  const wrap=body.querySelector("#nearbyList");
+  if(!rows.length)wrap.appendChild(el(`<p class="tiny" style="padding:10px;text-align:center">Nothing reported near here in the last ${NEARBY_DAYS} days. Pan the map somewhere birdier and try again.</p>`));
+  rows.forEach(r=>{
+    const b=r.id?BIRDS[r.id]:null;
+    const row=el(`<div class="spot-row">
+      <span class="spot-dot" style="background:${r.lifer?"#e9c969":spotCol(b)}"></span>
+      <div class="spot-row-info">
+        <div class="spot-row-name">${r.lifer?"⭐ ":""}${esc(r.name)}${b&&seen.has(r.id)?' <span class="tiny">✓ seen</span>':""}</div>
+        <div class="spot-row-meta">${r.km.toFixed(1)} km · ${esc(r.when)}${r.n>1?` · ${r.n} birds`:""}${r.loc?` · ${esc(r.loc)}`:""}</div>
+      </div>
+      <div class="spot-row-actions">
+        ${b?'<button class="btn sm ghost" data-a="bird">Bird</button>':""}
+        <button class="btn sm" data-a="map">📍 Map</button>
+      </div></div>`);
+    if(b)row.querySelector('[data-a="bird"]').onclick=()=>{closeModal();openBirdDetail(r.id);};
+    row.querySelector('[data-a="map"]').onclick=()=>{
+      closeModal();
+      placeSearchResult(r.lat,r.lng,r.name+(r.loc?" — "+r.loc:""));
+      if(_searchMarker)_searchMarker._birdQ=b?b.name:r.name;   // pre-fills "Add bird spot here"
+    };
+    wrap.appendChild(row);
+  });
+  openModal({title:"🔭 Nearby sightings",body});
+}
+
 function initSpotMap(mount){
   // Guard the double-init race: two views.map visits before leaflet.js loads
   // both resolve ensureLeaflet() on the same mount. The first inits the map;
@@ -4038,7 +4193,7 @@ function initSpotMap(mount){
     const dl=e.target.closest("[data-spot-del]");
     if(dl){deleteSpot(dl.dataset.spotDel);return;}
     const sa=e.target.closest("[data-search-add]");
-    if(sa&&_searchMarker){const ll=_searchMarker.getLatLng();addSpotDialog(ll.lat,ll.lng);return;}
+    if(sa&&_searchMarker){const ll=_searchMarker.getLatLng();addSpotDialog(ll.lat,ll.lng,{q:_searchMarker._birdQ||""});return;}
   });
   setTimeout(()=>{try{m.invalidateSize();}catch(e){}},60);
   startTracking(true);   // live tracking is on by default; first fix centers the map on the user
@@ -4080,6 +4235,7 @@ views.map=function(root){
     <ul class="spot-results" id="spotResults"></ul>
     <div class="spot-map-bar">
       <button class="btn sm" id="spotLocate">📍 Bird here</button>
+      <button class="btn sm ghost" id="spotNearby">🔭 Nearby</button>
       <button class="btn sm ghost" id="spotPaste">Paste coords…</button>
       <button class="btn sm ghost" id="spotShareAll">Share all</button>
       <span class="tiny">🛰️ Live tracking on · tap the map to add a spot</span>
@@ -4092,6 +4248,7 @@ views.map=function(root){
   root.appendChild(el(`<div class="spot-list" id="spotList"></div>`));
   refreshSpotList();
   box.querySelector("#spotLocate").onclick=locateMe;
+  box.querySelector("#spotNearby").onclick=fetchNearby;
   box.querySelector("#spotPaste").onclick=pasteCoordsDialog;
   box.querySelector("#spotRecenter").onclick=recenter;
   box.querySelector("#spotShareAll").onclick=()=>{
@@ -4335,6 +4492,13 @@ function openSettings(){
         <button data-mode="both" class="${mode==="both"?"active":""}">Both</button>
       </div>
     </div>
+    <div class="set-row col">
+      <div class="set-label"><div class="set-title">eBird API key</div><div class="set-desc">Powers 🔭 Nearby sightings on the Field Map. Get a free key at <a href="https://ebird.org/api/keygen" target="_blank" rel="noopener">ebird.org/api/keygen</a> — it's stored only on this device.</div></div>
+      <div style="display:flex;gap:8px;width:100%">
+        <input type="text" id="setEbird" placeholder="No key saved" value="${esc(ebirdKey())}" autocomplete="off" style="flex:1;min-width:0">
+        <button class="btn sm" id="setEbirdSave">Save</button>
+      </div>
+    </div>
     <div class="set-row col danger-zone">
       <div class="set-label"><div class="set-title">Reset all data</div><div class="set-desc">Permanently erase everything — seen birds, traveller's log, stats, lists, photos and settings. This cannot be undone.</div></div>
       <button class="btn danger" id="setReset">Reset all data…</button>
@@ -4353,6 +4517,11 @@ function openSettings(){
         render();
       };
     });
+    ov.querySelector("#setEbirdSave").onclick=()=>{
+      const k=ov.querySelector("#setEbird").value.trim();
+      state.prefs.ebirdKey=k;save();
+      toast(k?"eBird key saved":"eBird key removed");
+    };
     ov.querySelector("#setReset").onclick=confirmResetAll;
   }});
 }
