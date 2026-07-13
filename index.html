@@ -1701,15 +1701,19 @@ function tripCard(t){
   const actions=card.querySelector(".trip-actions");
   const photoBtn=el(`<button class="btn ghost sm">📷 Add photo</button>`);
   photoBtn.onclick=()=>pickTripPhoto(t.id);
+  const editBtn=el(`<button class="btn ghost sm">✎ Edit</button>`);
+  editBtn.onclick=()=>editTripDialog(t.id);
   if(t.active){
     const addBtn=el(`<button class="btn sm">＋ Log a bird</button>`);
     addBtn.onclick=()=>addBirdToTripDialog(t.id);
     const stopBtn=el(`<button class="btn rust sm">■ Stop trip</button>`);
     stopBtn.onclick=()=>stopTrip(t.id);
-    actions.append(addBtn,photoBtn,stopBtn);
+    actions.append(addBtn,photoBtn,editBtn,stopBtn);
   }else{
-    actions.appendChild(el(`<span class="count-badge">${t.birds.length} bird${t.birds.length===1?"":"s"} logged · ${fmtDur(t.durationMs||0)} afield</span>`));
+    const ind=state.sightings.filter(s=>s.tripId===t.id).reduce((a,s)=>a+(s.count>0?s.count:1),0);
+    actions.appendChild(el(`<span class="count-badge">${t.birds.length} bird${t.birds.length===1?"":"s"} logged${ind>t.birds.length?` · ${ind} individuals`:""} · ${fmtDur(t.durationMs||0)} afield</span>`));
     actions.appendChild(photoBtn);
+    actions.appendChild(editBtn);
     const del=el(`<button class="btn ghost sm" style="margin-left:auto">Delete trip</button>`);
     del.onclick=()=>confirmDialog("Delete this trip?","This removes the trip from your log. Birds already saved to Seen Birds will remain. Photos stay in your portfolio.",()=>{
       state.trips=state.trips.filter(x=>x.id!==t.id);save();render();toast("Trip deleted");});
@@ -1772,9 +1776,64 @@ function stopTrip(id){
   toast(`Trip ended · ${t.birds.length} bird${t.birds.length===1?"":"s"} logged`);
 }
 
+/* Epoch ms -> "YYYY-MM-DDTHH:mm" in LOCAL time, for <input type="datetime-local">. */
+function tsToLocal(ts){const d=new Date(ts),p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;}
+
+function editTripDialog(tripId){
+  const t=state.trips.find(x=>x.id===tripId);if(!t)return;
+  // Always include the trip's own region even if the user stopped tracking it.
+  const regions=[...new Set([...(state.loadedRegions.length?state.loadedRegions:Object.keys(REGION_NAMES)),t.region])];
+  const body=el(`<div>
+    <div class="form-row"><label class="fld">Trip name</label>
+      <input type="text" id="etName" value="${esc(t.name)}" style="width:100%"></div>
+    <div class="form-row"><label class="fld">Geographic region</label>
+      <select id="etRegion" style="width:100%">${regions.map(c=>`<option value="${c}" ${t.region===c?"selected":""}>${regionIcon(c)} ${esc(regionName(c))}</option>`).join("")}</select></div>
+    <div class="form-row"><label class="fld">Started</label>
+      <input type="datetime-local" id="etStart" value="${tsToLocal(t.startedAt)}" style="width:100%"></div>
+    ${t.active?"":`<div class="form-row"><label class="fld">Ended</label>
+      <input type="datetime-local" id="etEnd" value="${tsToLocal(t.endedAt||t.startedAt)}" style="width:100%"></div>`}
+    <p class="tiny">Renaming the trip or changing its region also updates the sightings recorded on it.</p>
+  </div>`);
+  const foot=el(`<div style="display:flex;gap:8px"><button class="btn ghost" id="etCancel">Cancel</button><button class="btn" id="etSave">Save changes</button></div>`);
+  openModal({title:"Edit trip",body,foot,onMount:ov=>{
+    ov.querySelector("#etCancel").onclick=closeModal;
+    ov.querySelector("#etSave").onclick=()=>{
+      const name=ov.querySelector("#etName").value.trim()||t.name;
+      const region=ov.querySelector("#etRegion").value||t.region;
+      const startRaw=ov.querySelector("#etStart").value;
+      const start=new Date(startRaw).getTime();
+      if(!isFinite(start)){toast("That start time doesn't look valid");return;}
+      if(start>Date.now()){toast("The trip can't start in the future");return;}
+      const startChanged=startRaw!==tsToLocal(t.startedAt);
+      let end=t.endedAt,endChanged=false;
+      if(!t.active){
+        const endRaw=ov.querySelector("#etEnd").value;
+        end=new Date(endRaw).getTime();
+        if(!isFinite(end)){toast("That end time doesn't look valid");return;}
+        if(end<start){toast("The trip can't end before it starts");return;}
+        endChanged=endRaw!==tsToLocal(t.endedAt||t.startedAt);
+      }
+      t.name=name;t.region=region;
+      // Only touch timestamps the user actually edited: datetime-local drops
+      // seconds, so blindly re-writing would shift times by up to 59s (and
+      // visibly change the trip duration) on a plain rename.
+      if(startChanged)t.startedAt=start;
+      if(!t.active&&(startChanged||endChanged)){
+        if(endChanged)t.endedAt=end;
+        t.durationMs=t.endedAt-t.startedAt;
+      }
+      // Keep the denormalised copies on this trip's sightings in step.
+      state.sightings.forEach(s=>{if(s.tripId===t.id){s.tripName=name;s.region=region;}});
+      save();closeModal();render();toast("Trip updated");
+    };
+  }});
+}
+
 function addBirdToTripDialog(tripId){
   const t=state.trips.find(x=>x.id===tripId);if(!t)return;
-  const list=regionBirds(t.region);
+  // Union in already-logged birds: after a trip's region is edited, species
+  // logged under the old region must still appear here to stay uncheckable.
+  const list=[...new Set([...regionBirds(t.region),...t.birds.filter(id=>BIRDS[id])])];
   const already=new Set(t.birds);
   let q="";
   const body=el(`<div>
@@ -1783,7 +1842,7 @@ function addBirdToTripDialog(tripId){
       <input type="search" id="bq" placeholder="Search birds of ${esc(regionName(t.region))}…">
     </div>
     <div class="scroll-list" id="blist"></div>
-    <p class="tiny" style="margin-top:10px">Checked birds are logged to this trip and saved to your Seen Birds catalogue.</p>
+    <p class="tiny" style="margin-top:10px">Checked birds are logged to this trip and saved to your Seen Birds catalogue. Use the number box to record how many individuals you saw.</p>
   </div>`);
   function draw(){
     const wrap=body.querySelector("#blist");wrap.innerHTML="";
@@ -1794,10 +1853,16 @@ function addBirdToTripDialog(tripId){
       const row=el(`<label class="checkline">
         <input type="checkbox" ${checked?"checked":""} data-id="${id}">
         <span style="flex:1"><b>${esc(dispName(b))}</b>${dispSubInline(b)}</span>
+        <input type="number" class="trip-ct" min="1" step="1" value="${checked?tripSightingCount(tripId,id):1}" title="How many did you see?" style="width:58px;${checked?"":"display:none"}">
         <span class="pill rarity-${rsl(b.r)}">${b.r}</span></label>`);
-      row.querySelector("input").onchange=e=>{
-        if(e.target.checked){logBirdToTrip(tripId,id);already.add(id);toast(`${b.name} logged`);}
-        else{unlogBirdFromTrip(tripId,id);already.delete(id);}
+      const ct=row.querySelector(".trip-ct");
+      // Per the HTML spec, clicks on interactive elements inside a <label>
+      // don't activate its control; stopPropagation is belt-and-braces.
+      ct.addEventListener("click",e=>e.stopPropagation());
+      ct.onchange=()=>{const c=parseInt(ct.value,10);setTripSightingCount(tripId,id,c);if(!(c>0))ct.value=1;};
+      row.querySelector("input[type=checkbox]").onchange=e=>{
+        if(e.target.checked){logBirdToTrip(tripId,id);already.add(id);ct.value=1;ct.style.display="";toast(`${b.name} logged`);}
+        else{unlogBirdFromTrip(tripId,id);already.delete(id);ct.style.display="none";}
       };
       wrap.appendChild(row);
     });
@@ -1822,6 +1887,18 @@ function logBirdToTrip(tripId,birdId){
   const t=state.trips.find(x=>x.id===tripId);if(!t||t.birds.includes(birdId))return;
   t.birds.push(birdId);
   recordSighting({birdId,region:t.region,tripId:t.id,tripName:t.name});
+}
+/* Count helpers for the trip-logging dialog's per-row number box. They target
+   the newest sighting of that species on that trip. */
+function tripSightingCount(tripId,birdId){
+  const s=state.sightings.filter(x=>x.tripId===tripId&&x.birdId===birdId).pop();
+  return s&&s.count>0?s.count:1;
+}
+function setTripSightingCount(tripId,birdId,count){
+  const s=state.sightings.filter(x=>x.tripId===tripId&&x.birdId===birdId).pop();
+  if(!s)return;
+  s.count=count>0?count:1;
+  save();
 }
 /* ---- "You found a lifer!" celebration: confetti + cheerful chime ---- */
 function playLiferChime(){
@@ -1921,7 +1998,7 @@ function confirmDialog(title,text,onYes,yesLabel="Delete"){
 /* ============================================================
    VIEW: SEEN BIRDS
    ============================================================ */
-let seenState={region:"ALL",year:"ALL"};
+let seenState={region:"ALL",year:"ALL",q:""};
 views.seen=function(root){
   // regions that actually appear among sightings (so the dropdown only shows used regions)
   const usedRegions=[...new Set(state.sightings.map(s=>s.region))];
@@ -1944,8 +2021,17 @@ views.seen=function(root){
         <option value="ALL">All regions</option>
         ${usedRegions.map(c=>`<option value="${c}" ${seenState.region===c?"selected":""}>${regionIcon(c)} ${esc(regionName(c))}</option>`).join("")}
       </select></div>
+    <div class="search-wrap" style="max-width:250px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input type="search" id="sq" placeholder="Search your birds…" value="${esc(seenState.q)}">
+    </div>
     <button class="icon-add" id="addSeen" title="Add a bird manually">＋</button>
   </div>`);
+  tb.querySelector("#sq").oninput=e=>{
+    seenState.q=e.target.value;
+    render();
+    const inp=document.getElementById("sq");if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}
+  };
   tb.querySelector("#seenRegion").onchange=e=>{seenState.region=e.target.value;render();};
   const yearSeg=tb.querySelector("#seenYear");
   if(yearSeg)yearSeg.querySelectorAll("button").forEach(btn=>btn.onclick=()=>{const y=btn.dataset.y;seenState.year=y==="ALL"?"ALL":parseInt(y,10);render();});
@@ -1956,8 +2042,11 @@ views.seen=function(root){
   let rows=state.sightings.slice().sort((a,b)=>b.date-a.date);
   if(seenState.region!=="ALL")rows=rows.filter(s=>s.region===seenState.region);
   if(seenState.year!=="ALL")rows=rows.filter(s=>new Date(s.date).getFullYear()===seenState.year);
+  const sq=seenState.q.trim().toLowerCase();
+  if(sq)rows=rows.filter(s=>{const b=BIRDS[s.birdId];return b&&(b.name.toLowerCase().includes(sq)||b.sci.toLowerCase().includes(sq));});
 
   if(rows.length===0){
+    if(sq){root.appendChild(el(`<p class="tiny" style="padding:22px;text-align:center">No seen birds match “${esc(seenState.q)}”.</p>`));return;}
     root.appendChild(emptyState("🐦","No birds yet","Birds you log during a trip appear here automatically, or add one yourself with the ＋ button.","Add a bird",addSeenManuallyDialog));
     return;
   }
@@ -1969,7 +2058,8 @@ views.seen=function(root){
     g.sightings.push(s);
   });
   // groups are already in latest-first order because rows were sorted by date desc
-  root.appendChild(el(`<div class="count-badge" style="margin-bottom:12px">${groups.length} species · ${rows.length} sighting${rows.length===1?"":"s"}${seenState.region!=="ALL"?" in "+regionName(seenState.region):""}${seenState.year!=="ALL"?" · "+seenState.year:""}</div>`));
+  const totalInd=rows.reduce((a,s)=>a+(s.count>0?s.count:1),0);
+  root.appendChild(el(`<div class="count-badge" style="margin-bottom:12px">${groups.length} species · ${rows.length} sighting${rows.length===1?"":"s"}${totalInd>rows.length?` · ${totalInd} individuals`:""}${seenState.region!=="ALL"?" in "+regionName(seenState.region):""}${seenState.year!=="ALL"?" · "+seenState.year:""}</div>`));
   const grid=el(`<div class="grid birds${densityClass()}"></div>`);
   groups.forEach(g=>grid.appendChild(seenCard(g)));
   root.appendChild(grid);
@@ -1980,6 +2070,7 @@ function seenCard(g){
   const hasPhoto=!!state.birdPhotos[g.birdId];
   const latest=g.sightings[0];
   const count=g.sightings.length;
+  const total=g.sightings.reduce((a,s)=>a+(s.count>0?s.count:1),0);
   // distinct regions across this species' sightings (in current scope)
   const regions=[...new Set(g.sightings.map(s=>s.region))];
   const regionPill=regions.length===1
@@ -1997,7 +2088,7 @@ function seenCard(g){
         <span class="pill ${hasPhoto?"photo":"outline"}">${hasPhoto?"📷 Your photo":"No photo"}</span>
       </div>
       <div class="meta" style="margin-top:7px">
-        ${count>1?`<span class="pill trip">Seen ${count}×</span>`:`<span class="pill trip">${esc(latest.tripName||"Manually added")}</span>`}
+        ${count>1?`<span class="pill trip">Seen ${count}×${total>count?` · ${total} birds`:""}</span>`:`<span class="pill trip">${esc(latest.tripName||"Manually added")}${total>1?` · ${total} birds`:""}</span>`}
         <span class="tiny" style="align-self:center">${count>1?"Latest "+fmtDate(latest.date):fmtDate(latest.date)}</span>
       </div>
     </div>
@@ -2694,12 +2785,22 @@ function editCustomListDialog(listId){
 /* ============================================================
    VIEW: PORTFOLIO
    ============================================================ */
+let portfolioState={q:""};
 views.portfolio=function(root){
   const tb=el(`<div class="toolbar">
     <div class="view-head" style="margin:0"><h2>Portfolio</h2><p class="sub">Your own photographs, kept at full resolution.</p></div>
     <div class="spacer"></div>
+    <div class="search-wrap" style="max-width:240px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input type="search" id="pq" placeholder="Search photos…" value="${esc(portfolioState.q)}">
+    </div>
     <button class="btn rust" id="upload">＋ Upload a photo</button>
   </div>`);
+  tb.querySelector("#pq").oninput=e=>{
+    portfolioState.q=e.target.value;
+    render();
+    const inp=document.getElementById("pq");if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}
+  };
   tb.querySelector("#upload").onclick=()=>{_pendingPhoto={kind:"portfolio"};document.getElementById("filePicker").click();};
   tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
@@ -2708,8 +2809,16 @@ views.portfolio=function(root){
     root.appendChild(emptyState("📷","Your portfolio is empty","Upload your bird photographs — they're stored at original quality and you can open any of them full-size.","Upload a photo",()=>{_pendingPhoto={kind:"portfolio"};document.getElementById("filePicker").click();}));
     return;
   }
+  const pq=portfolioState.q.trim().toLowerCase();
+  let ordered=state.portfolio.slice().sort((a,b)=>b.addedAt-a.addedAt);
+  // Filter BEFORE building cards: portfolioCard hands `ordered` to the
+  // lightbox for prev/next, so nav must traverse exactly what's shown.
+  if(pq)ordered=ordered.filter(p=>(p.title||"").toLowerCase().includes(pq)||(p.description||"").toLowerCase().includes(pq));
+  if(ordered.length===0){
+    root.appendChild(el(`<p class="tiny" style="padding:22px;text-align:center">No photos match “${esc(portfolioState.q)}”.</p>`));
+    return;
+  }
   const grid=el(`<div class="grid photos${densityClass()}"></div>`);
-  const ordered=state.portfolio.slice().sort((a,b)=>b.addedAt-a.addedAt);
   ordered.forEach((p,i)=>grid.appendChild(portfolioCard(p,ordered,i)));
   root.appendChild(grid);
 };
@@ -3016,15 +3125,15 @@ function exportLifeListCSV(){
   if(state.sightings.length===0){toast("No sightings to export");return;}
   const bySpecies={};
   state.sightings.forEach(s=>{
-    const g=bySpecies[s.birdId]=bySpecies[s.birdId]||{first:s.date,n:0,regions:new Set()};
-    g.n++;g.first=Math.min(g.first,s.date);g.regions.add(regionName(s.region));
+    const g=bySpecies[s.birdId]=bySpecies[s.birdId]||{first:s.date,n:0,ind:0,regions:new Set()};
+    g.n++;g.ind+=s.count>0?s.count:1;g.first=Math.min(g.first,s.date);g.regions.add(regionName(s.region));
   });
   const esc2=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-  const header=["Common name","Scientific name","Family","Rarity","First seen","Sightings","Regions"];
+  const header=["Common name","Scientific name","Family","Rarity","First seen","Sightings","Individuals","Regions"];
   const lines=[header.map(esc2).join(",")];
   Object.entries(bySpecies).sort((a,b)=>a[1].first-b[1].first).forEach(([id,g])=>{
     const b=BIRDS[id];if(!b)return;
-    lines.push([b.name,b.sci,b.fam,b.r,new Date(g.first).toISOString().slice(0,10),g.n,[...g.regions].join("; ")].map(esc2).join(","));
+    lines.push([b.name,b.sci,b.fam,b.r,new Date(g.first).toISOString().slice(0,10),g.n,g.ind,[...g.regions].join("; ")].map(esc2).join(","));
   });
   const blob=new Blob([lines.join("\n")],{type:"text/csv"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
