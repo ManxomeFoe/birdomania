@@ -480,6 +480,27 @@ body.dark .spot-map .leaflet-bar a{background:var(--paper-2);color:var(--ink)}
 .search-pin div{width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--gold);border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)}
 .spot-map-bar .btn.on{background:var(--rust)}
 
+/* ---------- Friends ---------- */
+.friend-me,.friend-add{background:#fffdf6;border:1px solid var(--line-dark);border-radius:12px;padding:14px 16px;margin-bottom:14px;box-shadow:var(--shadow)}
+body.dark .friend-me,body.dark .friend-add{background:var(--paper-2)}
+.friend-me-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.friend-me-row input{flex:1;min-width:180px}
+.friend-list{display:flex;flex-direction:column;gap:8px}
+.friend-row{display:flex;align-items:center;gap:10px;background:#fffdf6;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+body.dark .friend-row{background:var(--paper-2)}
+.friend-info{flex:1;min-width:0}
+.friend-name{font-weight:700;font-size:15px}
+.friend-actions{display:flex;gap:6px;flex:0 0 auto}
+.friend-cmp-list{display:flex;flex-wrap:wrap;gap:6px}
+/* ---------- Milestone badges (Stats) ---------- */
+.badge-wall{background:#fffdf6;border:1px solid var(--line-dark);border-radius:12px;padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+body.dark .badge-wall{background:var(--paper-2)}
+.badge-chips{display:flex;flex-wrap:wrap;gap:7px}
+.badge-chip{background:rgba(199,154,58,.14);border:1px solid var(--gold);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}
+.badge-next{margin-top:10px}
+.badge-bar{height:7px;border-radius:4px;background:var(--line);overflow:hidden;margin-bottom:5px}
+.badge-bar>span{display:block;height:100%;background:var(--gold)}
+
 /* ---------- Trip tally checklist ---------- */
 .tally-row{gap:8px}
 .tally-row.logged{background:rgba(47,74,60,.08);border-radius:8px}
@@ -519,6 +540,7 @@ body.dark .tally-row.logged{background:rgba(127,174,146,.12)}
     <button data-tab="quiz">Quiz</button>
     <button data-tab="portfolio">Portfolio</button>
     <button data-tab="map">Map</button>
+    <button data-tab="friends">Friends</button>
   </nav>
 </header>
 <main id="view"></main>
@@ -1222,7 +1244,10 @@ const DEFAULT_STATE={
   customRegions:{},          // code -> {name, icon, birdIds:[]}
   trips:[],                  // {id,name,region,startedAt,endedAt,active,birds:[birdId]}
   sightings:[],              // {id,birdId,region,tripId,tripName,date}
-  spots:[],                  // {id,birdId,lat,lng,note,date} — field-map pins
+  spots:[],                  // {id,birdId,lat,lng,note,date,tripId?} — field-map pins
+  friends:[],                // {id,name,addedAt,updatedAt,list:[birdId]} — friend-code snapshots
+  milestones:{},             // milestone key -> timestamp earned
+  profileName:"",            // display name used in shared friend codes
   birdPhotos:{},             // birdId -> imageId (IndexedDB)
   customLists:[],            // {id,name,baseRegion,birdIds:[]}
   portfolio:[],              // {id,title,description,imageId,addedAt,w,h}
@@ -1913,7 +1938,10 @@ function recordSighting({birdId,region,tripId,tripName,count,notes,date}){
   const isLifer=!state.sightings.some(s=>s.birdId===birdId);
   state.sightings.push({id:uid(),birdId,region,tripId:tripId||null,tripName:tripName||"",date:date||Date.now(),count:count>0?count:1,notes:notes||""});
   save();
-  if(isLifer)celebrateLifer(birdId);
+  if(isLifer){
+    celebrateLifer(birdId);
+    checkMilestones(false);   // life count / region % only move on a new lifer
+  }
   return isLifer;
 }
 function logBirdToTrip(tripId,birdId){
@@ -2093,6 +2121,85 @@ function celebrateLifer(birdId){
     ov.addEventListener("click",close);
     setTimeout(close,4200);
   }catch(e){}
+}
+
+/* ============================================================
+   MILESTONES — badges for life-list size and region completion.
+   Earned once, kept forever (state.milestones: key -> timestamp); deleting
+   sightings never revokes a badge. New installs with an existing life list
+   are seeded SILENTLY at boot so users aren't buried in retroactive confetti.
+   ============================================================ */
+const LIFE_TIERS=[
+  {n:10,emoji:"🐣",title:"First Flock",sub:"10 species on your life list"},
+  {n:25,emoji:"🪶",title:"Twenty-Five",sub:"25 species on your life list"},
+  {n:50,emoji:"🌿",title:"Half Hundred",sub:"50 species on your life list"},
+  {n:100,emoji:"💯",title:"The Century",sub:"100 species on your life list"},
+  {n:150,emoji:"🦅",title:"One-Fifty",sub:"150 species on your life list"},
+  {n:200,emoji:"🌟",title:"Double Century",sub:"200 species on your life list"},
+  {n:250,emoji:"👑",title:"Two-Fifty",sub:"250 species on your life list"},
+  {n:300,emoji:"🏆",title:"Three Hundred",sub:"300 species on your life list"},
+  {n:400,emoji:"🌍",title:"Four Hundred",sub:"400 species on your life list"},
+  {n:500,emoji:"🎇",title:"The Big 500",sub:"500 species on your life list"}
+];
+const REGION_TIERS=[25,50,75,100];
+function lifeListIds(){return [...new Set(state.sightings.map(s=>s.birdId))].filter(id=>BIRDS[id]);}
+// Milestone overlays are serialized through a queue and wait for any active
+// lifer/milestone overlay to clear first — so they never stack on the lifer
+// celebration that usually precedes them, nor on each other.
+let _celebQueue=[],_celebRunning=false;
+function celebrateMilestone(emoji,title,sub){_celebQueue.push({emoji,title,sub});runCelebQueue();}
+function runCelebQueue(){
+  if(_celebRunning||!_celebQueue.length)return;
+  if(document.querySelector(".lifer-ov")){setTimeout(runCelebQueue,700);return;} // a celebration is on screen
+  _celebRunning=true;
+  const m=_celebQueue.shift();
+  try{
+    const ov=el(`<div class="lifer-ov">
+      <canvas class="lifer-confetti"></canvas>
+      <div class="lifer-card">
+        <div class="lifer-burst">${m.emoji}</div>
+        <div class="lifer-h">Milestone!</div>
+        <div class="lifer-name">${esc(m.title)}</div>
+        <div class="lifer-sub">${esc(m.sub)}</div>
+      </div></div>`);
+    document.body.appendChild(ov);
+    playLiferChime();
+    startConfetti(ov.querySelector(".lifer-confetti"));
+    let closed=false;
+    const close=()=>{if(closed)return;closed=true;ov.classList.add("out");
+      setTimeout(()=>{if(ov.parentNode)ov.remove();_celebRunning=false;runCelebQueue();},360);};
+    ov.addEventListener("click",close);
+    setTimeout(close,4200);
+  }catch(e){_celebRunning=false;runCelebQueue();}
+}
+/* Checks every milestone; records newly-earned ones and (unless silent)
+   celebrates them one at a time, staggered so they never collide with the
+   lifer overlay that usually precedes this. */
+function checkMilestones(silent){
+  if(!state.milestones)state.milestones={};
+  const earned=[];
+  const life=lifeListIds().length;
+  LIFE_TIERS.forEach(t=>{
+    const key="life-"+t.n;
+    if(life>=t.n&&!state.milestones[key]){state.milestones[key]=Date.now();earned.push(t);}
+  });
+  const seen=new Set(lifeListIds());
+  (state.loadedRegions||[]).forEach(code=>{
+    const pool=regionBirds(code);if(!pool.length)return;
+    const got=pool.filter(id=>seen.has(id)).length;
+    const pct=Math.floor(got/pool.length*100);
+    REGION_TIERS.forEach(p=>{
+      const key="reg-"+code+"-"+p;
+      if(pct>=p&&!state.milestones[key]){
+        state.milestones[key]=Date.now();
+        earned.push({emoji:p===100?"🏅":"📍",title:`${regionName(code)} ${p===100?"complete!":p+"%"}`,
+                     sub:`${got} of ${pool.length} ${regionName(code)} species seen`});
+      }
+    });
+  });
+  if(earned.length)save();
+  if(!silent)earned.forEach(m=>celebrateMilestone(m.emoji,m.title,m.sub));   // queue serializes + waits out the lifer
+  return earned.length;
 }
 function unlogBirdFromTrip(tripId,birdId){
   const t=state.trips.find(x=>x.id===tripId);if(!t)return;
@@ -2299,7 +2406,7 @@ function listOptions(){
 // called when a state is clicked on the map
 function pickStateFromMap(code){
   if(!state.loadedRegions.includes(code)&&(REGION_NAMES[code]||state.customRegions[code])){
-    state.loadedRegions.push(code);save();toast(`${regionName(code)} added`);
+    state.loadedRegions.push(code);checkMilestones(true);save();toast(`${regionName(code)} added`);
   }
   listState.region="region:"+code;listState.sub=null;listState.q="";listState.fSize="";listState.fColor="";listState.fSeason="";
   render();
@@ -2746,7 +2853,7 @@ function downloadRegionDialog(){
       <div class="rc-t"><h4>${esc(REGION_NAMES[c])}</h4><small>${cnt} species</small></div>
       <button class="btn sm">⤓ Download</button></div>`);
     row.querySelector("button").onclick=()=>{
-      state.loadedRegions.push(c);save();closeModal();render();toast(`${REGION_NAMES[c]} added`);
+      state.loadedRegions.push(c);checkMilestones(true);save();closeModal();render();toast(`${REGION_NAMES[c]} added`);
     };
     wrap.appendChild(row);
   });
@@ -2768,6 +2875,7 @@ document.getElementById("regionPicker").addEventListener("change",function(e){
       if(!j.name||birdIds.length===0){toast("Invalid region file");return;}
       state.customRegions[code]={name:j.name,icon:j.icon||"📍",birdIds};
       if(!state.loadedRegions.includes(code))state.loadedRegions.push(code);
+      checkMilestones(true);
       save();closeModal();render();toast(`${j.name} imported`);
     }catch(err){toast("Could not read that file");}
   };
@@ -3085,6 +3193,11 @@ document.getElementById("dataPicker").addEventListener("change",function(e){
         // restore images first
         if(j.images){for(const[id,durl]of Object.entries(j.images)){const blob=await dataURLToBlob(durl);await new Promise(async res=>{const db=await idb();const tx=db.transaction("imgs","readwrite");tx.objectStore("imgs").put(blob,id);tx.oncomplete=res;tx.onerror=res;});}}
         state=Object.assign(structuredClone(DEFAULT_STATE),j.state);
+        // Import doesn't reload, so reconcile badges here (silently) — an old
+        // backup's milestones may be missing/stale; otherwise the next lifer
+        // would retroactively celebrate every tier at once.
+        if(!state.milestones)state.milestones={};
+        checkMilestones(true);
         save();render();toast("Backup restored");
       }catch(err){toast("That doesn't look like a Birdmania backup");}
     };
@@ -3177,6 +3290,29 @@ views.stats=function(root){
   </div>`);
   head.querySelector("#csvBtn").onclick=exportLifeListCSV;
   root.appendChild(head);
+
+  // ---- Milestone badge wall (before the empty-data return, so earned badges
+  //      survive even if every sighting is later deleted) ----
+  (function(){
+    const ms=state.milestones||{};
+    const badges=[];
+    LIFE_TIERS.forEach(t=>{if(ms["life-"+t.n])badges.push({emoji:t.emoji,label:t.title,ts:ms["life-"+t.n]});});
+    // Region badges enumerate the STORED keys (not loadedRegions) so a badge
+    // isn't hidden when its region is unloaded. Key: reg-<code>-<pct>.
+    Object.keys(ms).forEach(k=>{
+      const m=/^reg-(.+)-(25|50|75|100)$/.exec(k);
+      if(m)badges.push({emoji:m[2]==="100"?"🏅":"📍",label:`${regionName(m[1])} ${m[2]==="100"?"complete":m[2]+"%"}`,ts:ms[k]});
+    });
+    const life=lifeListIds().length;
+    const next=LIFE_TIERS.find(t=>life<t.n);
+    if(!badges.length&&!next)return;
+    const wall=el(`<div class="badge-wall">
+      <div class="fld" style="margin-bottom:8px">Milestones</div>
+      <div class="badge-chips">${badges.sort((a,b)=>a.ts-b.ts).map(b=>`<span class="badge-chip" title="${esc(fmtDate(b.ts))}">${b.emoji} ${esc(b.label)}</span>`).join("")||'<span class="tiny">No badges yet — they arrive as your life list grows.</span>'}</div>
+      ${next?`<div class="badge-next"><div class="badge-bar"><span style="width:${Math.min(100,Math.round(life/next.n*100))}%"></span></div><span class="tiny">${life} / ${next.n} species to “${esc(next.title)}”</span></div>`:""}
+    </div>`);
+    root.appendChild(wall);
+  })();
 
   const sightings=state.sightings;
   if(sightings.length===0){
@@ -3984,6 +4120,192 @@ views.map=function(root){
 };
 
 /* ============================================================
+   VIEW: FRIENDS — local-only friend list, no server. You and a friend swap
+   "friend codes" (a text blob: name + life-list slugs, base64 so messengers
+   can't mangle it) over any channel — Messages, email, carrier pigeon — and
+   the app compares life lists offline. Codes are snapshots: re-paste a
+   friend's newer code to update them.
+   ============================================================ */
+const FRIEND_CODE_TAG="BFC1.";
+function b64EncodeUtf8(s){return btoa(unescape(encodeURIComponent(s)));}
+function b64DecodeUtf8(s){return decodeURIComponent(escape(atob(s)));}
+function friendCodeText(){
+  const list=lifeListIds();
+  const name=(state.profileName||"A birder").trim().slice(0,40);
+  const payload=b64EncodeUtf8(JSON.stringify({v:1,n:name,d:Date.now(),l:list}));
+  return `🐦 Birdomania friend code — ${name} (${list.length} species)\n`+
+         `Paste this whole message into Birdomania → Friends → Add a friend:\n`+
+         FRIEND_CODE_TAG+payload;
+}
+/* Tolerant parser: finds the BFC1. tag anywhere in pasted text and reads the
+   base64 that follows, ignoring whitespace/line breaks messengers insert.
+   HARDENED against untrusted input: bounded sizes (a code is never big — the
+   whole catalog is ~520 slugs), and trailing garbage (an appended signature
+   like "Sent from my iPhone") is tolerated by trying successively shorter
+   base64 prefixes until one yields a valid friend-code object. */
+const FRIEND_MAX_TEXT=200000, FRIEND_MAX_B64=100000, FRIEND_MAX_LIST=2000;
+function parseFriendCode(text){
+  if(!text||text.length>FRIEND_MAX_TEXT)return null;
+  const at=text.indexOf(FRIEND_CODE_TAG);
+  if(at<0)return null;
+  let b64="";
+  for(let i=at+FRIEND_CODE_TAG.length;i<text.length&&b64.length<FRIEND_MAX_B64;i++){
+    const c=text[i];
+    if(c>='A'&&c<='Z'||c>='a'&&c<='z'||c>='0'&&c<='9'||c==='+'||c==='/'||c==='=')b64+=c;
+    else if(c===' '||c==='\n'||c==='\r'||c==='\t')continue;   // messenger reflow
+    else break;
+  }
+  const decodeOne=s=>{
+    try{
+      const o=JSON.parse(b64DecodeUtf8(s));
+      if(!o||typeof o.n!=="string"||!Array.isArray(o.l)||o.l.length>FRIEND_MAX_LIST)return null;
+      const list=[...new Set(o.l.filter(x=>typeof x==="string"&&/^[a-z0-9-]{1,60}$/.test(x)))];
+      return {name:o.n.trim().slice(0,40)||"A birder",date:+o.d||Date.now(),list};
+    }catch(e){return null;}
+  };
+  // valid base64 length is a multiple of 4; try the full string then peel
+  // trailing (appended-signature) chars back to the nearest boundary.
+  let len=b64.length-(b64.length%4);
+  for(;len>=8;len-=4){
+    const r=decodeOne(b64.slice(0,len));
+    if(r)return r;
+  }
+  return null;
+}
+// Own-property check: a friend code is untrusted, and a slug like "constructor"
+// passes the char filter yet resolves to Object.prototype.constructor via the
+// chain — so a bracket lookup would inject a phantom bird. Always hasOwn-gate.
+function realBird(id){return Object.prototype.hasOwnProperty.call(BIRDS,id);}
+function friendCompare(f){
+  const mine=new Set(lifeListIds());
+  const theirs=new Set(f.list.filter(realBird));
+  const both=[],onlyMe=[],onlyThem=[];
+  mine.forEach(id=>{(theirs.has(id)?both:onlyMe).push(id);});
+  theirs.forEach(id=>{if(!mine.has(id))onlyThem.push(id);});
+  const byName=(a,b)=>BIRDS[a].name.localeCompare(BIRDS[b].name);
+  return {both:both.sort(byName),onlyMe:onlyMe.sort(byName),onlyThem:onlyThem.sort(byName),
+          unknown:f.list.filter(id=>!realBird(id)).length};
+}
+function compareFriendDialog(friendId){
+  const f=state.friends.find(x=>x.id===friendId);if(!f)return;
+  const c=friendCompare(f);
+  function section(title,ids,hint){
+    if(!ids.length)return `<div class="fld" style="margin:14px 0 4px">${title} (0)</div><p class="tiny">${hint}</p>`;
+    return `<div class="fld" style="margin:14px 0 4px">${title} (${ids.length})</div>
+      <div class="friend-cmp-list">${ids.map(id=>`<span class="chip friend-cmp-bird" data-bird="${esc(id)}">${esc(BIRDS[id].name)}</span>`).join("")}</div>`;
+  }
+  const body=el(`<div>
+    ${section(`🎯 ${esc(f.name)} has, you don't`,c.onlyThem,"Nothing — your list covers theirs!")}
+    ${section("🤝 You both have",c.both,"No overlap yet.")}
+    ${section("💪 Only you have",c.onlyMe,"They've seen everything you have.")}
+    ${c.unknown?`<p class="tiny" style="margin-top:10px">(${c.unknown} species in their code aren't in your catalog yet — update the app to see them.)</p>`:""}
+  </div>`);
+  body.querySelectorAll(".friend-cmp-bird").forEach(chip=>{
+    chip.style.cursor="pointer";
+    chip.onclick=()=>openBirdDetail(chip.dataset.bird);
+  });
+  openModal({title:`You vs ${f.name}`,body,wide:true,   // openModal esc()s titles
+    foot:el(`<div><button class="btn" onclick="closeModal()">Done</button></div>`)});
+}
+function addFriendFromText(text,existingId){
+  const parsed=parseFriendCode(text);
+  if(!parsed){toast("That doesn't look like a Birdomania friend code");return false;}
+  const pushNew=()=>{
+    state.friends.push({id:uid(),name:parsed.name,list:parsed.list,addedAt:Date.now(),updatedAt:Date.now()});
+    save();render();toast(`${parsed.name} added — tap Compare to see your lists side by side`);
+  };
+  const applyTo=f=>{f.name=parsed.name;f.list=parsed.list;f.updatedAt=Date.now();save();render();toast(`${f.name} updated`);};
+  // Explicit update (the ↻ button) targets a specific friend by id.
+  if(existingId){
+    const f=state.friends.find(x=>x.id===existingId);
+    if(f){applyTo(f);return true;}
+  }
+  // A same-name friend already exists: don't silently overwrite (two real
+  // friends can share a display name) — let the user choose.
+  const dup=state.friends.find(x=>x.name.toLowerCase()===parsed.name.toLowerCase());
+  if(dup){
+    const body=el(`<p class="tiny">You already have a friend named <b>${esc(dup.name)}</b>. Update their bird list with this code, or add as a separate friend?</p>`);
+    const foot=el(`<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" id="fSep">Add separate</button><button class="btn" id="fUpdName">Update ${esc(dup.name)}</button></div>`);
+    openModal({title:"Update or add?",body,foot,onMount:ov=>{
+      ov.querySelector("#fUpdName").onclick=()=>{applyTo(dup);closeModal();};
+      ov.querySelector("#fSep").onclick=()=>{pushNew();closeModal();};
+    }});
+    return true;
+  }
+  pushNew();
+  return true;
+}
+function updateFriendDialog(friendId){
+  const f=state.friends.find(x=>x.id===friendId);if(!f)return;
+  const body=el(`<div><p class="tiny" style="margin:0 0 8px">Paste ${esc(f.name)}'s newer friend code:</p>
+    <textarea id="fUpd" rows="5" style="width:100%"></textarea></div>`);
+  openModal({title:`Update ${f.name}`,body,   // openModal esc()s titles
+    foot:el(`<div><button class="btn" id="fUpdGo">Update</button></div>`),
+    onMount:ov=>{ov.querySelector("#fUpdGo").onclick=()=>{if(addFriendFromText(ov.querySelector("#fUpd").value,friendId))closeModal();};}});
+}
+views.friends=function(root){
+  if(!state.friends)state.friends=[];
+  const myCount=lifeListIds().length;
+  root.appendChild(el(`<div class="view-head"><h2>Friends</h2>
+    <p class="sub">Swap friend codes — no accounts, no internet needed. Compare life lists, steal targets.</p></div>`));
+  // --- my code card ---
+  const me=el(`<div class="friend-me">
+    <div class="fld">Your friend code</div>
+    <div class="friend-me-row">
+      <input type="text" id="fName" placeholder="Your name (shown to friends)" value="${esc(state.profileName||"")}" maxlength="40">
+      <button class="btn" id="fShare">📤 Share my code</button>
+    </div>
+    <p class="tiny" style="margin:8px 0 0">${myCount} species on your list. Your code is a snapshot — share a fresh one as your list grows.</p>
+  </div>`);
+  me.querySelector("#fName").onchange=e=>{state.profileName=e.target.value.trim();save();};
+  me.querySelector("#fShare").onclick=()=>{
+    state.profileName=me.querySelector("#fName").value.trim();save();
+    if(!myCount){toast("Log a bird first — your code carries your life list");return;}
+    shareTextOut(friendCodeText());
+  };
+  root.appendChild(me);
+  // --- add friend card ---
+  const add=el(`<div class="friend-add">
+    <div class="fld">Add a friend</div>
+    <textarea id="fPaste" rows="4" style="width:100%" placeholder="Paste a friend code here…"></textarea>
+    <button class="btn" id="fAdd" style="margin-top:8px">＋ Add friend</button>
+  </div>`);
+  add.querySelector("#fAdd").onclick=()=>{
+    const t=add.querySelector("#fPaste").value;
+    if(addFriendFromText(t))add.querySelector("#fPaste").value="";
+  };
+  root.appendChild(add);
+  // --- friend rows ---
+  root.appendChild(el(`<h3 style="margin:18px 0 6px">Your friends ${state.friends.length?`<span class="tiny">(${state.friends.length})</span>`:""}</h3>`));
+  if(!state.friends.length){
+    root.appendChild(el(`<p class="tiny" style="padding:14px;text-align:center">No friends yet. Share your code, and paste theirs above.</p>`));
+    return;
+  }
+  const wrap=el(`<div class="friend-list"></div>`);
+  state.friends.slice().sort((a,b)=>b.updatedAt-a.updatedAt).forEach(f=>{
+    const c=friendCompare(f);
+    const row=el(`<div class="friend-row">
+      <div class="friend-info">
+        <div class="friend-name">${esc(f.name)}</div>
+        <div class="tiny">${f.list.length} species · 🎯 ${c.onlyThem.length} you need · 🤝 ${c.both.length} shared · updated ${fmtDate(f.updatedAt)}</div>
+      </div>
+      <div class="friend-actions">
+        <button class="btn sm" data-a="cmp">Compare</button>
+        <button class="btn ghost sm" data-a="upd" title="Paste a newer code">↻</button>
+        <button class="btn ghost sm" data-a="del" title="Remove">✕</button>
+      </div>
+    </div>`);
+    row.querySelector('[data-a="cmp"]').onclick=()=>compareFriendDialog(f.id);
+    row.querySelector('[data-a="upd"]').onclick=()=>updateFriendDialog(f.id);
+    row.querySelector('[data-a="del"]').onclick=()=>confirmDialog("Remove this friend?",`${f.name} and their list snapshot will be removed. You can re-add them with a new code anytime.`,()=>{
+      state.friends=state.friends.filter(x=>x.id!==f.id);save();render();toast("Friend removed");
+    },"Remove");
+    wrap.appendChild(row);
+  });
+  root.appendChild(wrap);
+};
+
+/* ============================================================
    THEME (dark mode) + PWA install support
    ============================================================ */
 function applyTheme(){
@@ -4078,6 +4400,12 @@ Object.keys(BIRDS).forEach(id=>{
   if(BIRDS[id].wiki&&state.wikiCache[id]&&!state.wikiCache[id].ok)delete state.wikiCache[id];
 });
 save();
+// Milestones: silently reconcile at EVERY boot so the badge set always matches
+// the current life list — existing users, restores, and imports all get their
+// earned badges recorded without a retroactive confetti storm. Only milestones
+// crossed live during a session celebrate.
+if(!state.milestones)state.milestones={};
+checkMilestones(true);
 applyTheme();
 setupPWA();
 // keep sticky search bars anchored just beneath the sticky header (whose height
