@@ -130,6 +130,31 @@ html,body{
   display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;
 }
 
+/* ---- Backups settings section (same look as the offline region rows) ---- */
+.backup-row .backup-list{
+  margin-top:12px;display:flex;flex-direction:column;gap:8px;
+}
+.backup-row .backup-item{
+  display:flex;align-items:center;gap:12px;
+  padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+  background:var(--paper-2,#fffdf6);
+}
+.backup-row .backup-info{
+  flex:1;min-width:0;
+}
+.backup-row .backup-date{
+  font-weight:600;font-size:14px;color:var(--ink);
+}
+.backup-row .backup-size{
+  font-size:12px;color:var(--ink-soft);margin-top:2px;
+}
+.backup-row .backup-item .btn{
+  flex:0 0 auto;
+}
+.backup-row .backup-empty{
+  font-size:13px;color:var(--ink-soft);margin-top:8px;
+}
+
 /* ============================================================
    Extra colour themes (beyond the built-in light/dark).
    Applied by android-inject.js via state.prefs.theme. The app's tokens are

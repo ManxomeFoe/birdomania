@@ -479,6 +479,13 @@ body.dark .spot-map .leaflet-bar a{background:var(--paper-2);color:var(--ink)}
 .search-pin{background:none;border:none}
 .search-pin div{width:16px;height:16px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--gold);border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)}
 .spot-map-bar .btn.on{background:var(--rust)}
+
+/* ---------- Trip tally checklist ---------- */
+.tally-row{gap:8px}
+.tally-row.logged{background:rgba(47,74,60,.08);border-radius:8px}
+body.dark .tally-row.logged{background:rgba(127,174,146,.12)}
+.tally-n{min-width:36px;text-align:center;font-weight:700;color:var(--forest)}
+.quiz-audio audio{outline:none}
 </style>
 </head>
 <body>
@@ -1703,17 +1710,30 @@ function tripCard(t){
   photoBtn.onclick=()=>pickTripPhoto(t.id);
   const editBtn=el(`<button class="btn ghost sm">✎ Edit</button>`);
   editBtn.onclick=()=>editTripDialog(t.id);
+  // Pins dropped for this trip's birds → jump to them on the Field Map.
+  const tripPins=(state.spots||[]).filter(s=>s.tripId===t.id);
+  let mapBtn=null;
+  if(tripPins.length){
+    mapBtn=el(`<button class="btn ghost sm">🗺️ ${tripPins.length} pin${tripPins.length===1?"":"s"}</button>`);
+    mapBtn.onclick=()=>{_pendingMapFocus=t.id;switchTab("map");};
+  }
   if(t.active){
-    const addBtn=el(`<button class="btn sm">＋ Log a bird</button>`);
-    addBtn.onclick=()=>addBirdToTripDialog(t.id);
+    const tallyBtn=el(`<button class="btn sm">📋 Checklist</button>`);
+    tallyBtn.onclick=()=>tallyDialog(t.id);
     const stopBtn=el(`<button class="btn rust sm">■ Stop trip</button>`);
     stopBtn.onclick=()=>stopTrip(t.id);
-    actions.append(addBtn,photoBtn,editBtn,stopBtn);
+    actions.append(tallyBtn,photoBtn,editBtn);
+    if(mapBtn)actions.appendChild(mapBtn);
+    actions.appendChild(stopBtn);
   }else{
     const ind=state.sightings.filter(s=>s.tripId===t.id).reduce((a,s)=>a+(s.count>0?s.count:1),0);
     actions.appendChild(el(`<span class="count-badge">${t.birds.length} bird${t.birds.length===1?"":"s"} logged${ind>t.birds.length?` · ${ind} individuals`:""} · ${fmtDur(t.durationMs||0)} afield</span>`));
     actions.appendChild(photoBtn);
     actions.appendChild(editBtn);
+    if(mapBtn)actions.appendChild(mapBtn);
+    const shareBtn=el(`<button class="btn ghost sm">Share</button>`);
+    shareBtn.onclick=()=>shareTextOut(tripShareText(t));
+    actions.appendChild(shareBtn);
     const del=el(`<button class="btn ghost sm" style="margin-left:auto">Delete trip</button>`);
     del.onclick=()=>confirmDialog("Delete this trip?","This removes the trip from your log. Birds already saved to Seen Birds will remain. Photos stay in your portfolio.",()=>{
       state.trips=state.trips.filter(x=>x.id!==t.id);save();render();toast("Trip deleted");});
@@ -1916,6 +1936,95 @@ function setTripSightingCount(tripId,birdId,count){
   if(!s)return;
   s.count=count>0?count:1;
   save();
+}
+
+/* ---- Tally checklist: fast field logging for an active trip. Tap +1 each
+   time you see one; the first tap logs the species. Rows redraw in place
+   (modal-local draw(), no full render), so it's quick with cold fingers. ---- */
+function tallyDialog(tripId){
+  const t=state.trips.find(x=>x.id===tripId);if(!t)return;
+  let q="";
+  const body=el(`<div>
+    <div class="search-wrap" style="max-width:none;margin-bottom:10px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input type="search" id="tallyQ" placeholder="Search birds of ${esc(regionName(t.region))}…">
+    </div>
+    <div class="scroll-list" id="tallyList" style="max-height:56vh"></div>
+    <p class="tiny" style="margin-top:10px">Tap <b>+1</b> each time you see one — the first tap logs the species. 📍 pins your current location for that bird.</p>
+  </div>`);
+  function draw(){
+    const wrap=body.querySelector("#tallyList");wrap.innerHTML="";
+    const base=[...new Set([...regionBirds(t.region),...t.birds.filter(x=>BIRDS[x])])];
+    const filtered=base.filter(id=>{const b=BIRDS[id];return !q||b.name.toLowerCase().includes(q)||b.sci.toLowerCase().includes(q);});
+    if(!filtered.length){wrap.appendChild(el(`<p class="tiny" style="padding:14px;text-align:center">No matches.</p>`));return;}
+    filtered.forEach(id=>{
+      const b=BIRDS[id];
+      const logged=t.birds.includes(id);
+      const n=logged?tripSightingCount(tripId,id):0;
+      const row=el(`<div class="checkline tally-row${logged?" logged":""}">
+        <span style="flex:1"><b>${esc(dispName(b))}</b>${dispSubInline(b)}</span>
+        ${logged?`<button class="btn ghost sm" data-a="pin" title="Pin current location">📍</button><button class="btn ghost sm" data-a="minus" title="One fewer">−</button><span class="tally-n">×${n}</span>`:""}
+        <button class="btn sm" data-a="plus" title="One more">+1</button>
+      </div>`);
+      row.querySelector('[data-a="plus"]').onclick=()=>{
+        if(!t.birds.includes(id)){logBirdToTrip(tripId,id);toast(`${b.name} logged`);}
+        else setTripSightingCount(tripId,id,tripSightingCount(tripId,id)+1);
+        draw();
+      };
+      const minus=row.querySelector('[data-a="minus"]');
+      if(minus)minus.onclick=()=>{
+        const cur=tripSightingCount(tripId,id);
+        if(cur>1)setTripSightingCount(tripId,id,cur-1);
+        else{unlogBirdFromTrip(tripId,id);toast(`${b.name} removed`);}
+        draw();
+      };
+      const pin=row.querySelector('[data-a="pin"]');
+      if(pin)pin.onclick=()=>pinBirdHere(tripId,id);
+      wrap.appendChild(row);
+    });
+  }
+  draw();
+  const foot=el(`<div><button class="btn" id="tallyDone">Done</button></div>`);
+  openModal({title:`Checklist — ${esc(t.name)}`,body,foot,wide:true,onMount:ov=>{
+    ov.querySelector("#tallyQ").oninput=e=>{q=e.target.value.trim().toLowerCase();draw();};
+    ov.querySelector("#tallyDone").onclick=()=>{closeModal();render();if(state.trips.find(x=>x.active))startTimerTick();};
+  }});
+}
+
+/* One-shot GPS pin for a bird just logged on a trip (spots gain an optional
+   tripId so trips and the Field Map know about each other). */
+function pinBirdHere(tripId,birdId){
+  if(!navigator.geolocation){toast("Location isn't available here");return;}
+  toast("Getting a fix…");
+  navigator.geolocation.getCurrentPosition(p=>{
+    const t=state.trips.find(x=>x.id===tripId);
+    if(!state.spots)state.spots=[];
+    state.spots.push({id:uid(),birdId,lat:+p.coords.latitude.toFixed(6),lng:+p.coords.longitude.toFixed(6),
+      note:"",date:(t&&!t.active)?(t.endedAt||t.startedAt):Date.now(),tripId});
+    save();
+    toast(`📍 Pin dropped for ${BIRDS[birdId]?BIRDS[birdId].name:"bird"}`);
+  },()=>toast("Couldn't get a location fix"),{enableHighAccuracy:true,timeout:12000,maximumAge:15000});
+}
+
+/* Shareable trip summary: species + counts + pin links, plain text. */
+function tripShareText(t){
+  const ss=state.sightings.filter(s=>s.tripId===t.id);
+  const ind=ss.reduce((a,s)=>a+(s.count>0?s.count:1),0);
+  const lines=[`🐦 ${t.name} — ${fmtDate(t.startedAt)}`,
+               `🕐 ${fmtDur(t.durationMs||0)} afield · ${regionName(t.region)}`,
+               `Species (${t.birds.length}${ind>t.birds.length?`, ${ind} individuals`:""}):`];
+  t.birds.forEach(id=>{
+    const b=BIRDS[id];if(!b)return;
+    const s=ss.filter(x=>x.birdId===id).pop();
+    lines.push(`• ${b.name}${s&&s.count>1?` ×${s.count}`:""}`);
+  });
+  const sp=(state.spots||[]).filter(s=>s.tripId===t.id);
+  if(sp.length){
+    lines.push("📍 Pins:");
+    sp.forEach(s=>{const b=BIRDS[s.birdId];lines.push(`• ${b?b.name:"Spot"} — ${gmapsLink(s.lat,s.lng)}`);});
+  }
+  lines.push("— shared from Birdomania");
+  return lines.join("\n");
 }
 /* ---- "You found a lifer!" celebration: confetti + cheerful chime ---- */
 function playLiferChime(){
@@ -2409,39 +2518,47 @@ function openBirdDetail(id){
 // so we search Commons' audio files, which are CORS-enabled and CC-licensed.)
 const _audioCache={};
 function stripTags(s){return (s||"").replace(/<[^>]*>/g,"").replace(/\s+/g," ").trim();}
+/* Resolve a bird's recording metadata from Wikimedia Commons (one API call:
+   File-namespace search + imageinfo). Resolves to {src,by,license,page} or
+   null (cached either way for the session); rejects only on network failure.
+   Shared by the bird-detail player and the sound quiz. */
+async function fetchBirdAudioMeta(id){
+  if(id in _audioCache)return _audioCache[id];
+  const b=BIRDS[id];if(!b)return null;
+  const q=encodeURIComponent('filetype:audio "'+b.sci+'"');
+  const url=`https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*`+
+    `&generator=search&gsrnamespace=6&gsrlimit=8&gsrsearch=${q}`+
+    `&prop=imageinfo&iiprop=url|mime|extmetadata`;
+  const r=await fetch(url,{headers:{Accept:"application/json"}});
+  const j=await r.json();
+  const pages=(j.query&&j.query.pages)?Object.values(j.query.pages):[];
+  pages.sort((a,b)=>(a.index||0)-(b.index||0));   // preserve search relevance order
+  let meta=null;
+  for(const pg of pages){
+    const ii=pg.imageinfo&&pg.imageinfo[0];
+    if(!ii||!ii.url||!/audio|ogg/i.test(ii.mime||""))continue;
+    const em=ii.extmetadata||{};
+    meta={src:ii.url,
+          by:stripTags(em.Artist&&em.Artist.value)||"unknown",
+          license:stripTags(em.LicenseShortName&&em.LicenseShortName.value),
+          page:pg.title?"https://commons.wikimedia.org/wiki/"+encodeURIComponent(pg.title.replace(/ /g,"_")):""};
+    break;
+  }
+  _audioCache[id]=meta;   // null = definitive "none found" for this session
+  return meta;
+}
 async function loadBirdAudio(ov,id,btn){
   const box=ov.querySelector("#audioBox");if(!box)return;
-  const b=BIRDS[id];
   box.style.display="";
   if(_audioCache[id]===null){box.innerHTML=`<p class="tiny" style="padding:10px">No recording found. Try xeno-canto directly.</p>`;return;}
   if(_audioCache[id]){box.innerHTML="";box.appendChild(buildAudioPlayer(_audioCache[id]));return;}
   box.innerHTML=`<p class="tiny" style="padding:10px">Finding a recording…</p>`;
   btn.disabled=true;
   try{
-    // One call: search File namespace for audio of this species, and pull each
-    // hit's url + mime + license/author metadata.
-    const q=encodeURIComponent('filetype:audio "'+b.sci+'"');
-    const url=`https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*`+
-      `&generator=search&gsrnamespace=6&gsrlimit=8&gsrsearch=${q}`+
-      `&prop=imageinfo&iiprop=url|mime|extmetadata`;
-    const r=await fetch(url,{headers:{Accept:"application/json"}});
-    const j=await r.json();
-    const pages=(j.query&&j.query.pages)?Object.values(j.query.pages):[];
-    pages.sort((a,b)=>(a.index||0)-(b.index||0));   // preserve search relevance order
-    let meta=null;
-    for(const pg of pages){
-      const ii=pg.imageinfo&&pg.imageinfo[0];
-      if(!ii||!ii.url||!/audio|ogg/i.test(ii.mime||""))continue;
-      const em=ii.extmetadata||{};
-      meta={src:ii.url,
-            by:stripTags(em.Artist&&em.Artist.value)||"unknown",
-            license:stripTags(em.LicenseShortName&&em.LicenseShortName.value),
-            page:pg.title?"https://commons.wikimedia.org/wiki/"+encodeURIComponent(pg.title.replace(/ /g,"_")):""};
-      break;
-    }
+    const meta=await fetchBirdAudioMeta(id);
     btn.disabled=false;
-    if(!meta){_audioCache[id]=null;box.innerHTML=`<p class="tiny" style="padding:10px">No recording found. Try xeno-canto directly.</p>`;return;}
-    _audioCache[id]=meta;box.innerHTML="";box.appendChild(buildAudioPlayer(meta));
+    if(!meta){box.innerHTML=`<p class="tiny" style="padding:10px">No recording found. Try xeno-canto directly.</p>`;return;}
+    box.innerHTML="";box.appendChild(buildAudioPlayer(meta));
   }catch(e){
     btn.disabled=false;
     box.innerHTML=`<p class="tiny" style="padding:10px">Couldn't load audio (offline?). Try xeno-canto directly.</p>`;
@@ -3162,7 +3279,8 @@ function exportLifeListCSV(){
 /* ============================================================
    VIEW: QUIZ  (identify the bird from 4 choices)
    ============================================================ */
-let quizState={current:null,options:[],answered:false,score:0,total:0,region:"ALL",sub:null};
+let quizState={current:null,options:[],answered:false,score:0,total:0,region:"ALL",sub:null,
+               mode:"photo",audioMeta:null,loadingSound:false,soundFail:false};
 function quizRegions(){return state.loadedRegions.length?state.loadedRegions:Object.keys(REGION_NAMES);}
 function quizPool(){
   const ids=new Set();
@@ -3185,17 +3303,61 @@ function newQuizQuestion(){
   quizState.options=[...opts].sort(()=>Math.random()-0.5);
   quizState.answered=false;
 }
+/* Sound-mode question picker: not every species has a Commons recording, so
+   candidates are vetted (fetchBirdAudioMeta) BEFORE the question is committed —
+   no dead questions, no skip-flash. Async: views.quiz shows a loading card
+   until this re-renders. */
+let _soundPicking=false,_soundGen=0;
+async function newSoundQuestion(){
+  if(_soundPicking)return;
+  _soundPicking=true;
+  const gen=++_soundGen;   // invalidated if the user changes region/mode mid-fetch
+  const pool=quizPool();
+  quizState.current=null;quizState.audioMeta=null;quizState.answered=false;
+  quizState.loadingSound=true;quizState.soundFail=false;
+  try{
+    const tried=new Set();
+    for(let i=0;i<6&&tried.size<pool.length;i++){
+      const cand=pool[Math.floor(Math.random()*pool.length)];
+      if(tried.has(cand)){i--;continue;}
+      tried.add(cand);
+      let meta=null;
+      try{meta=await fetchBirdAudioMeta(cand);}catch(e){quizState.soundFail=true;break;} // network down
+      if(meta){
+        const opts=new Set([cand]);
+        while(opts.size<4)opts.add(pool[Math.floor(Math.random()*pool.length)]);
+        quizState.current=cand;
+        quizState.options=[...opts].sort(()=>Math.random()-0.5);
+        quizState.audioMeta=meta;
+        break;
+      }
+    }
+    if(!quizState.current&&!quizState.soundFail)quizState.soundFail=true; // no audio in sample
+  }finally{
+    quizState.loadingSound=false;
+    _soundPicking=false;
+  }
+  // If the scope changed while we were fetching, discard this result — a newer
+  // pick (or a plain render) owns the view now.
+  if(gen!==_soundGen)return;
+  if(currentTab==="quiz")render();
+}
 views.quiz=function(root){
   const regions=quizRegions();
   // validate current scope against what's loaded
   if(quizState.region!=="ALL"&&!regions.includes(quizState.region)){quizState.region="ALL";quizState.sub=null;quizState.current=null;}
   if(quizState.sub&&SUBREGION_OF[quizState.sub]!==quizState.region){quizState.sub=null;quizState.current=null;}
 
-  root.appendChild(el(`<div class="view-head"><h2>Bird ID Quiz</h2><p class="sub">Name the bird from its picture. Narrow the pool by region below.</p></div>`));
+  root.appendChild(el(`<div class="view-head"><h2>Bird ID Quiz</h2><p class="sub">${quizState.mode==="sound"?"Name the bird from its song or call.":"Name the bird from its picture."} Narrow the pool by region below.</p></div>`));
 
   // scope selector: region (+ subregion for states that have them, e.g. Alaska)
   const subs=quizState.region!=="ALL"?subregionsForState(quizState.region):[];
   const tb=el(`<div class="toolbar">
+    <div><label class="fld">Quiz mode</label>
+      <div class="seg" id="qMode">
+        <button data-m="photo" class="${quizState.mode==="photo"?"active":""}">📷 Photos</button>
+        <button data-m="sound" class="${quizState.mode==="sound"?"active":""}">🔊 Sounds</button>
+      </div></div>
     <div class="spacer"></div>
     <div><label class="fld">Region</label>
       <select id="qRegion">
@@ -3208,9 +3370,16 @@ views.quiz=function(root){
         ${subs.map(sc=>`<option value="${sc}" ${quizState.sub===sc?"selected":""}>🏘️ ${esc(regionName(sc))}</option>`).join("")}
       </select></div>`:""}
   </div>`);
-  tb.querySelector("#qRegion").onchange=e=>{quizState.region=e.target.value;quizState.sub=null;quizState.current=null;render();};
+  // Any scope/mode change invalidates an in-flight sound pick and clears the
+  // loading flag so views.quiz starts a fresh pick instead of waiting on stale one.
+  const resetSound=()=>{_soundGen++;quizState.current=null;quizState.audioMeta=null;quizState.soundFail=false;quizState.loadingSound=false;quizState.answered=false;};
+  tb.querySelectorAll("#qMode button").forEach(btn=>btn.onclick=()=>{
+    if(quizState.mode===btn.dataset.m)return;
+    quizState.mode=btn.dataset.m;resetSound();render();
+  });
+  tb.querySelector("#qRegion").onchange=e=>{quizState.region=e.target.value;quizState.sub=null;resetSound();render();};
   const qSub=tb.querySelector("#qSub");
-  if(qSub)qSub.onchange=e=>{quizState.sub=e.target.value||null;quizState.current=null;render();};
+  if(qSub)qSub.onchange=e=>{quizState.sub=e.target.value||null;resetSound();render();};
   root.appendChild(tb);
 
   const pool=quizPool();
@@ -3220,21 +3389,49 @@ views.quiz=function(root){
     return;
   }
   root.appendChild(el(`<div class="target-tip" style="text-align:center">Drawing from <b>${pool.length}</b> species in ${esc(scopeName)}.</div>`));
-  if(!quizState.current)newQuizQuestion();
+
+  if(quizState.mode==="sound"){
+    // Async pipeline: the picker vets candidates for available recordings and
+    // re-renders when a question is ready; until then show a holding card.
+    if(!quizState.current&&!quizState.loadingSound&&!quizState.soundFail)newSoundQuestion();
+    if(quizState.loadingSound||(!quizState.current&&!quizState.soundFail)){
+      root.appendChild(el(`<div class="quiz-wrap"><div class="quiz-score">Score: <b>${quizState.score}</b> / ${quizState.total}</div>
+        <p class="tiny" style="padding:26px;text-align:center">🔊 Finding a recording…</p></div>`));
+      return;
+    }
+    if(quizState.soundFail){
+      const failWrap=el(`<div class="quiz-wrap">
+        <p class="tiny" style="padding:22px;text-align:center">Couldn't load recordings — you may be offline, or the birds drawn from this pool lack recordings on Wikimedia Commons.</p>
+        <div style="text-align:center;margin-bottom:14px"><button class="btn" id="soundRetry">Try again</button></div></div>`);
+      failWrap.querySelector("#soundRetry").onclick=()=>{quizState.soundFail=false;render();};
+      root.appendChild(failWrap);
+      return;
+    }
+  }else{
+    if(!quizState.current)newQuizQuestion();
+  }
   const cur=quizState.current,b=BIRDS[cur];
-  const wrap=el(`<div class="quiz-wrap">
-    <div class="quiz-score">Score: <b>${quizState.score}</b> / ${quizState.total}</div>
-    <div class="quiz-imgwrap">
+  const media=quizState.mode==="sound"
+    ?`<div class="quiz-audio" style="padding:20px 12px 8px"></div>`
+    :`<div class="quiz-imgwrap">
       <div class="quiz-img" data-birdimg="${cur}"></div>
       <button class="quiz-nav prev" aria-label="Previous photo">‹</button>
       <button class="quiz-nav next" aria-label="Next photo">›</button>
       <div class="quiz-imgcount"></div>
-    </div>
+    </div>`;
+  const wrap=el(`<div class="quiz-wrap">
+    <div class="quiz-score">Score: <b>${quizState.score}</b> / ${quizState.total}</div>
+    ${media}
     <div class="quiz-opts"></div>
     <div id="quizMsg" style="min-height:24px;margin-bottom:8px"></div>
     <button class="btn" id="nextQ" style="display:${quizState.answered?"inline-flex":"none"}">Next bird →</button>
   </div>`);
-  buildQuizImages(wrap,cur);
+  if(quizState.mode==="sound"){
+    // Plain controls, no filename/caption anywhere the answer could leak.
+    wrap.querySelector(".quiz-audio").appendChild(el(`<audio controls preload="auto" src="${esc(quizState.audioMeta.src)}" style="width:100%"></audio>`));
+  }else{
+    buildQuizImages(wrap,cur);
+  }
   const opts=wrap.querySelector(".quiz-opts");
   quizState.options.forEach(id=>{
     const btn=el(`<button class="quiz-opt" data-id="${id}">${esc(dispName(BIRDS[id]))}</button>`);
@@ -3248,15 +3445,21 @@ views.quiz=function(root){
       const correct=id===cur;
       if(correct)quizState.score++;
       opts.querySelectorAll(".quiz-opt").forEach(o=>{o.disabled=true;if(o.dataset.id===cur)o.classList.add("correct");else if(o===btn)o.classList.add("wrong");});
-      wrap.querySelector("#quizMsg").innerHTML=correct?`<span style="color:var(--forest);font-weight:600">✓ Correct!</span>`:`<span style="color:var(--rare);font-weight:600">✗ It's the ${esc(dispName(b))}</span>${dispSub(b)?` <span class="tiny">(${esc(dispSub(b))})</span>`:""}`;
+      // In sound mode the reveal also carries the recording's CC attribution.
+      const credit=quizState.mode==="sound"&&quizState.audioMeta
+        ?`<div class="tiny" style="margin-top:4px">Recording by ${esc(quizState.audioMeta.by)}${quizState.audioMeta.license?" · "+esc(quizState.audioMeta.license):""} · ${quizState.audioMeta.page?`<a target="_blank" rel="noopener" href="${esc(quizState.audioMeta.page)}">Wikimedia Commons</a>`:"Wikimedia Commons"}</div>`
+        :"";
+      wrap.querySelector("#quizMsg").innerHTML=(correct?`<span style="color:var(--forest);font-weight:600">✓ Correct!</span>`:`<span style="color:var(--rare);font-weight:600">✗ It's the ${esc(dispName(b))}</span>${dispSub(b)?` <span class="tiny">(${esc(dispSub(b))})</span>`:""}`)+credit;
       wrap.querySelector("#nextQ").style.display="inline-flex";
       const qi=wrap.querySelector(".quiz-img");
-      qi.style.cursor="pointer";qi.title="Open bird profile";
-      qi.onclick=()=>openBirdDetail(cur);
+      if(qi){qi.style.cursor="pointer";qi.title="Open bird profile";qi.onclick=()=>openBirdDetail(cur);}
     };
     opts.appendChild(btn);
   });
-  wrap.querySelector("#nextQ").onclick=()=>{newQuizQuestion();render();};
+  wrap.querySelector("#nextQ").onclick=()=>{
+    if(quizState.mode==="sound"){newSoundQuestion();render();}   // async picker; render shows the holding card
+    else{newQuizQuestion();render();}
+  };
   root.appendChild(wrap);
 };
 // Image carousel for the quiz — scrolls through every photo available on the
@@ -3302,6 +3505,7 @@ function buildQuizImages(wrap,id){
 let _spotMap=null,_spotMarkers={},_leafletLoad=null;
 // Live tracking + compass state.
 let _geoWatch=null,_youMarker=null,_accCircle=null,_follow=false,_orientHandler=null,_heading=null,_searchMarker=null,_gotFirstFix=false,_geoDenied=false;
+let _pendingMapFocus=null;   // tripId handoff from a trip card's 🗺️ button
 
 function ensureLeaflet(){
   if(window.L&&window.L.map)return Promise.resolve(true);
@@ -3702,6 +3906,17 @@ function initSpotMap(mount){
   });
   setTimeout(()=>{try{m.invalidateSize();}catch(e){}},60);
   startTracking(true);   // live tracking is on by default; first fix centers the map on the user
+  // Arriving from a trip card's 🗺️ button: frame that trip's pins and pause
+  // follow (via pauseFollow so the Recenter button appears) so the incoming
+  // GPS fix doesn't immediately yank the view away from them.
+  if(_pendingMapFocus){
+    const tm=(state.spots||[]).filter(s=>s.tripId===_pendingMapFocus).map(s=>_spotMarkers[s.id]).filter(Boolean);
+    if(tm.length){
+      m.fitBounds(L.featureGroup(tm).getBounds().pad(0.3),{maxZoom:14});
+      pauseFollow();
+    }
+    _pendingMapFocus=null;
+  }
 }
 
 /* Stop live tracking + compass and drop the search pin. Called from render()
@@ -3753,10 +3968,14 @@ views.map=function(root){
     runSearch(box.querySelector("#spotSearchInput").value);
   });
   ensureLeaflet().then(ok=>{
-    if(currentTab!=="map")return;              // user already left the tab
+    // A pending trip-focus is consumed by initSpotMap; if we never get there
+    // (left the tab, or the map failed to load), drop it so it can't misfire
+    // on a later, unrelated map visit.
+    if(currentTab!=="map"){_pendingMapFocus=null;return;}
     const mount=document.getElementById("spotMap");
-    if(!mount)return;
+    if(!mount){_pendingMapFocus=null;return;}
     if(!ok){
+      _pendingMapFocus=null;
       mount.innerHTML='<div class="spot-map-fallback">🗺️ The map couldn\'t load (offline?). Your saved spots are listed below and will appear on the map next time you\'re online.</div>';
       return;
     }

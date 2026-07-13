@@ -1044,14 +1044,117 @@
     }, 5000);
   })();
 
+  /* ---- 8. Automatic backups (Android shell only) ----
+     The native side snapshots localStorage's birdmania_state_v1 into private
+     app storage (filesDir/backups, 7 newest kept) ~12s after launch and on
+     every backgrounding — records survive even if WebView storage is
+     corrupted (the near-miss that once looked like months of lost sightings).
+     This section lists those snapshots and restores one on request. Desktop
+     browsers have no AndroidShell bridge, so the section simply never
+     appears there. */
+  function fmtBackupSize(bytes){
+    if (!isFinite(bytes) || bytes <= 0) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  function backupLabel(b){
+    var d = new Date(+b.mtime);
+    if (isFinite(d)) {
+      return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) +
+             ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+    return b.name;
+  }
+  function restoreBackup(b){
+    var label = backupLabel(b);
+    confirmDialog('Restore this backup?',
+      'Restores your birds, trips and spots from ' + label +
+      '. Your photos are kept — none are lost.',
+      function(){
+        var raw = '';
+        try { raw = AndroidShell.readBackup(b.name) || ''; } catch (e) { raw = ''; }
+        var restored = null;
+        try {
+          var parsed = JSON.parse(raw);
+          // Schema-validate: the records collections must be arrays, not a
+          // corrupt {"trips":null} that would overwrite good data then crash
+          // rendering.
+          if (parsed && typeof parsed === 'object' &&
+              Array.isArray(parsed.sightings) && Array.isArray(parsed.trips)) {
+            restored = parsed;
+          }
+        } catch (e) {}
+        if (!restored) { toast('Could not read that backup — nothing was changed'); return; }
+        // Photos live as blobs in IndexedDB, referenced by state. A backup only
+        // holds records, so restoring an OLDER snapshot would orphan photos
+        // added since. Preserve the CURRENT photo references (birdPhotos /
+        // birdThumb / portfolio) so no photo is ever lost by a restore — that's
+        // what "your photos are kept" promises.
+        try {
+          var cur = JSON.parse(localStorage.getItem('birdmania_state_v1') || '{}') || {};
+          restored.birdPhotos = Object.assign({}, restored.birdPhotos || {}, cur.birdPhotos || {});
+          restored.birdThumb  = Object.assign({}, restored.birdThumb  || {}, cur.birdThumb  || {});
+          var byId = {}; (restored.portfolio || []).forEach(function(p){ if(p&&p.id) byId[p.id]=p; });
+          (cur.portfolio || []).forEach(function(p){ if(p&&p.id&&!byId[p.id]){ byId[p.id]=p; (restored.portfolio=restored.portfolio||[]).push(p); } });
+        } catch (e) {}
+        // Flush any pending debounced save BEFORE overwriting the stored state,
+        // so no stale flush (pagehide fires during reload) can land on top of
+        // the restored snapshot — flush() only writes when dirty.
+        try { if (window.__birdFlushSave) window.__birdFlushSave(); } catch (e) {}
+        try { localStorage.setItem('birdmania_state_v1', JSON.stringify(restored)); }
+        catch (e) { toast('Could not restore the backup — nothing was changed'); return; }
+        location.reload();
+      },
+      'Restore');
+  }
+  function injectBackupSection(settingsEl){
+    if (!(window.AndroidShell && AndroidShell.listBackups && AndroidShell.readBackup)) return;
+    if (settingsEl.querySelector('.backup-row')) return;
+    var danger = settingsEl.querySelector('.danger-zone');
+    var row = document.createElement('div');
+    row.className = 'set-row col backup-row';
+    row.innerHTML =
+      '<div class="set-label"><div class="set-title">Backups (this phone)</div>' +
+      '<div class="set-desc">Safety copies of your records — birds, trips, spots and ' +
+      'settings, but not photos — saved automatically to this phone while you use the ' +
+      'app. For a full backup that includes photos, use Export.</div></div>' +
+      '<div class="backup-list"></div>';
+    if (danger) settingsEl.insertBefore(row, danger); else settingsEl.appendChild(row);
+
+    var listEl = row.querySelector('.backup-list');
+    var backups = [];
+    try { backups = JSON.parse(AndroidShell.listBackups()) || []; } catch (e) { backups = []; }
+    if (!backups.length) {
+      listEl.innerHTML = '<div class="backup-empty">No backups yet — the first one is ' +
+        'taken automatically shortly after the app loads.</div>';
+      return;
+    }
+    backups.forEach(function(b){
+      var item = document.createElement('div');
+      item.className = 'backup-item';
+      var size = fmtBackupSize(+b.size);
+      item.innerHTML =
+        '<div class="backup-info"><div class="backup-date">' + esc(backupLabel(b)) + '</div>' +
+        (size ? '<div class="backup-size">' + esc(size) + '</div>' : '') +
+        '</div>';
+      var btn = document.createElement('button');
+      btn.className = 'btn sm ghost';
+      btn.textContent = 'Restore';
+      btn.onclick = function(){ restoreBackup(b); };
+      item.appendChild(btn);
+      listEl.appendChild(item);
+    });
+  }
+
   // Wrap the page's openSettings so the modal gains the theme picker + offline
-  // section + update checker.
+  // section + update checker + native-backup list.
   if (typeof openSettings === 'function') {
     var orig = openSettings;
     window.openSettings = function(){
       orig.apply(this, arguments);
       var s = document.querySelector('#modal-root .settings');
-      if (s) { injectThemeSection(s); injectOfflineSection(s); injectUpdateSection(s); }
+      if (s) { injectThemeSection(s); injectOfflineSection(s); injectUpdateSection(s); injectBackupSection(s); }
     };
     var btn = document.getElementById('btnSettings');
     if (btn) btn.onclick = window.openSettings;
