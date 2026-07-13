@@ -113,6 +113,12 @@ label.fld{display:block;font-size:12px;font-weight:700;letter-spacing:.5px;text-
 .grid.regions{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
 .grid.photos{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
 /* grid density modes: default 1-across comfortable, .d2 medium, .d3 compact */
+/* drag-to-reorder mode: touch-action:none so the drag isn't eaten by page
+   scroll on touch; children lose pointer-events so a press anywhere targets
+   the card itself (and card buttons can't fire mid-arrangement) */
+.grid.reordering .card{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;outline:2px dashed var(--line-dark);outline-offset:-3px}
+.grid.reordering .card *{pointer-events:none}
+.grid.reordering .card.dragging{opacity:.85;transform:scale(1.04);box-shadow:0 12px 32px rgba(0,0,0,.3);cursor:grabbing;z-index:5;position:relative}
 .grid.birds.d2,.grid.photos.d2{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
 .grid.birds.d3,.grid.photos.d3{grid-template-columns:repeat(auto-fill,minmax(95px,1fr));gap:9px}
 .grid.d2 .card .body{padding:8px 10px 10px}
@@ -1255,6 +1261,10 @@ const DEFAULT_STATE={
   galleryCache:{},           // birdId -> {ok, photos:[{src,full,caption,credit,page}]}
   birdThumb:{},              // birdId -> chosen profile thumbnail {kind:'user'|'url'|'svg', ref?, src?}
   gridDensity:1,             // list/portfolio card size: 1 comfortable, 2 medium, 3 compact
+  seenSort:"date",           // Seen Birds order: 'date' (latest first) | 'az' | 'custom'
+  seenOrder:[],              // birdId[] — the user's custom Seen arrangement
+  portfolioSort:"date",      // Portfolio order: 'date' | 'az' | 'custom'
+  portfolioOrder:[],         // portfolio entry id[] — the user's custom arrangement
   prefs:{theme:"light",nameMode:"both"}  // user preferences (theme; nameMode: 'common'|'sci'|'both')
 };
 let state=load();
@@ -2237,7 +2247,100 @@ function confirmDialog(title,text,onYes,yesLabel="Delete"){
 /* ============================================================
    VIEW: SEEN BIRDS
    ============================================================ */
-let seenState={region:"ALL",year:"ALL",q:""};
+/* ============================================================
+   Custom ordering — shared by Seen Birds and Portfolio.
+   Custom arrangements persist as id arrays (state.seenOrder /
+   state.portfolioOrder) that self-heal: ids that vanished are dropped,
+   new ids are prepended (newest-first, matching the app's convention).
+   ============================================================ */
+// Rewrite only the visible ids' slots in the full order — reordering a
+// filtered/searched subset must leave every hidden item exactly in place.
+function applySubsetOrder(full,visibleNew){
+  const known=new Set(full);
+  visibleNew=visibleNew.filter(id=>known.has(id));   // ignore cards the order doesn't track
+  const vis=new Set(visibleNew);
+  const pos=[];
+  full.forEach((id,i)=>{if(vis.has(id))pos.push(i);});
+  visibleNew.forEach((id,k)=>{full[pos[k]]=id;});
+}
+function reconcileOrder(orderKey,allIds){
+  const cur=(Array.isArray(state[orderKey])?state[orderKey]:[]).filter(id=>allIds.includes(id));
+  const have=new Set(cur);
+  const next=allIds.filter(id=>!have.has(id)).concat(cur);
+  if(next.length!==(state[orderKey]||[]).length||next.some((id,i)=>id!==state[orderKey][i])){state[orderKey]=next;save();}
+  return next;
+}
+/* Pointer-based drag-to-reorder for a card grid (works on touch — HTML5
+   drag-and-drop doesn't). Active only while the grid has .reordering.
+   The dragged card keeps pointer capture but loses hit-testing, so
+   elementFromPoint sees the card underneath; near the viewport edges an
+   rAF loop auto-scrolls the page so long lists stay reachable. */
+function makeGridReorderable(grid,onDrop){
+  let drag=null,rafId=null,lastX=0,lastY=0;
+  const autoscroll=()=>{
+    if(!drag)return;
+    const m=90,vh=window.innerHeight;
+    if(lastY<m)window.scrollBy(0,-Math.ceil((m-lastY)/5));
+    else if(lastY>vh-m)window.scrollBy(0,Math.ceil((lastY-(vh-m))/5));
+    rafId=requestAnimationFrame(autoscroll);
+  };
+  grid.addEventListener("pointerdown",e=>{
+    if(!grid.classList.contains("reordering"))return;
+    const card=e.target.closest(".card");
+    if(!card||card.parentElement!==grid)return;
+    e.preventDefault();
+    drag=card;card.classList.add("dragging");card.style.pointerEvents="none";
+    try{card.setPointerCapture(e.pointerId);}catch(err){}
+    lastX=e.clientX;lastY=e.clientY;
+    rafId=requestAnimationFrame(autoscroll);
+  });
+  grid.addEventListener("pointermove",e=>{
+    if(!drag)return;
+    e.preventDefault();
+    lastX=e.clientX;lastY=e.clientY;
+    const over=document.elementFromPoint(e.clientX,e.clientY);
+    const target=over&&over.closest(".card");
+    if(!target||target===drag||target.parentElement!==grid)return;
+    const r=target.getBoundingClientRect();
+    // same row → decide by X; different row → decide by Y
+    const inRow=e.clientY>=r.top&&e.clientY<=r.bottom;
+    const after=inRow?e.clientX>r.left+r.width/2:e.clientY>r.top+r.height/2;
+    grid.insertBefore(drag,after?target.nextSibling:target);
+  });
+  const end=()=>{
+    if(!drag)return;
+    drag.classList.remove("dragging");drag.style.pointerEvents="";
+    drag=null;
+    if(rafId){cancelAnimationFrame(rafId);rafId=null;}
+    onDrop([...grid.children]);
+  };
+  grid.addEventListener("pointerup",end);
+  grid.addEventListener("pointercancel",end);
+}
+// Sort segmented control: Date added / A–Z, plus Custom once an arrangement exists
+function sortSegHTML(id,cur,hasCustom){
+  return `<div><label class="fld">Sort</label><div class="seg" id="${id}">
+    <button data-s="date" class="${cur==="date"?"active":""}">Date added</button>
+    <button data-s="az" class="${cur==="az"?"active":""}">A–Z</button>
+    ${hasCustom?`<button data-s="custom" class="${cur==="custom"?"active":""}">Custom</button>`:""}
+  </div></div>`;
+}
+function reorderBtn(active,onclick){
+  const b=el(`<button class="btn sm ${active?"":"ghost"}" title="Drag cards into your own order">${active?"✓ Done":"⠿ Reorder"}</button>`);
+  b.onclick=onclick;
+  return b;
+}
+
+let seenState={region:"ALL",year:"ALL",q:"",reorder:false};
+// full species order across ALL sightings (ignoring view filters)
+function seenFullOrderIds(sortMode){
+  const latest={};
+  state.sightings.forEach(s=>{if(BIRDS[s.birdId]&&(!latest[s.birdId]||s.date>latest[s.birdId]))latest[s.birdId]=s.date;});
+  const ids=Object.keys(latest);
+  if(sortMode==="az")ids.sort((a,b)=>dispName(BIRDS[a]).localeCompare(dispName(BIRDS[b])));
+  else ids.sort((a,b)=>latest[b]-latest[a]);
+  return ids;
+}
 views.seen=function(root){
   // regions that actually appear among sightings (so the dropdown only shows used regions)
   const usedRegions=[...new Set(state.sightings.map(s=>s.region))];
@@ -2260,6 +2363,7 @@ views.seen=function(root){
         <option value="ALL">All regions</option>
         ${usedRegions.map(c=>`<option value="${c}" ${seenState.region===c?"selected":""}>${regionIcon(c)} ${esc(regionName(c))}</option>`).join("")}
       </select></div>
+    ${sortSegHTML("seenSortSeg",state.seenSort||"date",(state.seenOrder||[]).length>0)}
     <div class="search-wrap" style="max-width:250px">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
       <input type="search" id="sq" placeholder="Search your birds…" value="${esc(seenState.q)}">
@@ -2275,6 +2379,20 @@ views.seen=function(root){
   const yearSeg=tb.querySelector("#seenYear");
   if(yearSeg)yearSeg.querySelectorAll("button").forEach(btn=>btn.onclick=()=>{const y=btn.dataset.y;seenState.year=y==="ALL"?"ALL":parseInt(y,10);render();});
   tb.querySelector("#addSeen").onclick=addSeenManuallyDialog;
+  tb.querySelectorAll("#seenSortSeg button").forEach(btn=>btn.onclick=()=>{
+    state.seenSort=btn.dataset.s;
+    if(btn.dataset.s!=="custom")seenState.reorder=false;   // drag only ever edits the custom order
+    save();render();
+  });
+  tb.appendChild(reorderBtn(seenState.reorder,()=>{
+    seenState.reorder=!seenState.reorder;
+    if(seenState.reorder&&state.seenSort!=="custom"){
+      // snapshot what's on screen as the starting custom arrangement
+      state.seenOrder=seenFullOrderIds(state.seenSort||"date");
+      state.seenSort="custom";save();
+    }
+    render();
+  }));
   tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
@@ -2296,12 +2414,24 @@ views.seen=function(root){
     if(!g){g=byId[s.birdId]={birdId:s.birdId,sightings:[]};groups.push(g);}
     g.sightings.push(s);
   });
-  // groups are already in latest-first order because rows were sorted by date desc
+  // groups arrive latest-first (rows were sorted by date desc) = "date" mode
+  const sort=state.seenSort||"date";
+  if(sort==="az")groups.sort((a,b)=>{const x=BIRDS[a.birdId],y=BIRDS[b.birdId];return x&&y?dispName(x).localeCompare(dispName(y)):0;});
+  else if(sort==="custom"){
+    const order=reconcileOrder("seenOrder",seenFullOrderIds("date"));
+    const idx={};order.forEach((id,i)=>idx[id]=i);
+    groups.sort((a,b)=>(idx[a.birdId]??1e9)-(idx[b.birdId]??1e9));
+  }
   const totalInd=rows.reduce((a,s)=>a+(s.count>0?s.count:1),0);
   root.appendChild(el(`<div class="count-badge" style="margin-bottom:12px">${groups.length} species · ${rows.length} sighting${rows.length===1?"":"s"}${totalInd>rows.length?` · ${totalInd} individuals`:""}${seenState.region!=="ALL"?" in "+regionName(seenState.region):""}${seenState.year!=="ALL"?" · "+seenState.year:""}</div>`));
-  const grid=el(`<div class="grid birds${densityClass()}"></div>`);
-  groups.forEach(g=>grid.appendChild(seenCard(g)));
+  if(seenState.reorder)root.appendChild(el(`<p class="tiny" style="margin:-6px 0 10px">⠿ Drag cards into your own order — tap <b>✓ Done</b> when you're happy.</p>`));
+  const grid=el(`<div class="grid birds${densityClass()}${seenState.reorder?" reordering":""}"></div>`);
+  groups.forEach(g=>{const c=seenCard(g);c.dataset.oid=g.birdId;grid.appendChild(c);});
   root.appendChild(grid);
+  if(seenState.reorder)makeGridReorderable(grid,cards=>{
+    applySubsetOrder(state.seenOrder,cards.map(c=>c.dataset.oid).filter(Boolean));
+    save();
+  });
 };
 
 function seenCard(g){
@@ -3033,11 +3163,19 @@ function editCustomListDialog(listId){
 /* ============================================================
    VIEW: PORTFOLIO
    ============================================================ */
-let portfolioState={q:""};
+let portfolioState={q:"",reorder:false};
+// full entry-id order across the whole portfolio (ignoring search), date desc
+function portfolioFullOrderIds(sortMode){
+  const list=state.portfolio.slice();
+  if(sortMode==="az")list.sort((a,b)=>(a.title||"Untitled").localeCompare(b.title||"Untitled"));
+  else list.sort((a,b)=>b.addedAt-a.addedAt);
+  return list.map(p=>p.id);
+}
 views.portfolio=function(root){
   const tb=el(`<div class="toolbar">
     <div class="view-head" style="margin:0"><h2>Portfolio</h2><p class="sub">Your own photographs, kept at full resolution.</p></div>
     <div class="spacer"></div>
+    ${sortSegHTML("pfSortSeg",state.portfolioSort||"date",(state.portfolioOrder||[]).length>0)}
     <div class="search-wrap" style="max-width:240px">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
       <input type="search" id="pq" placeholder="Search photos…" value="${esc(portfolioState.q)}">
@@ -3050,6 +3188,20 @@ views.portfolio=function(root){
     const inp=document.getElementById("pq");if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}
   };
   tb.querySelector("#upload").onclick=()=>{_pendingPhoto={kind:"portfolio"};document.getElementById("filePicker").click();};
+  tb.querySelectorAll("#pfSortSeg button").forEach(btn=>btn.onclick=()=>{
+    state.portfolioSort=btn.dataset.s;
+    if(btn.dataset.s!=="custom")portfolioState.reorder=false;   // drag only ever edits the custom order
+    save();render();
+  });
+  tb.appendChild(reorderBtn(portfolioState.reorder,()=>{
+    portfolioState.reorder=!portfolioState.reorder;
+    if(portfolioState.reorder&&state.portfolioSort!=="custom"){
+      // snapshot what's on screen as the starting custom arrangement
+      state.portfolioOrder=portfolioFullOrderIds(state.portfolioSort||"date");
+      state.portfolioSort="custom";save();
+    }
+    render();
+  }));
   tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
@@ -3058,7 +3210,15 @@ views.portfolio=function(root){
     return;
   }
   const pq=portfolioState.q.trim().toLowerCase();
-  let ordered=state.portfolio.slice().sort((a,b)=>b.addedAt-a.addedAt);
+  const psort=state.portfolioSort||"date";
+  let ordered=state.portfolio.slice();
+  if(psort==="az")ordered.sort((a,b)=>(a.title||"Untitled").localeCompare(b.title||"Untitled"));
+  else if(psort==="custom"){
+    const order=reconcileOrder("portfolioOrder",portfolioFullOrderIds("date"));
+    const idx={};order.forEach((id,i)=>idx[id]=i);
+    ordered.sort((a,b)=>(idx[a.id]??1e9)-(idx[b.id]??1e9));
+  }
+  else ordered.sort((a,b)=>b.addedAt-a.addedAt);
   // Filter BEFORE building cards: portfolioCard hands `ordered` to the
   // lightbox for prev/next, so nav must traverse exactly what's shown.
   if(pq)ordered=ordered.filter(p=>(p.title||"").toLowerCase().includes(pq)||(p.description||"").toLowerCase().includes(pq));
@@ -3066,9 +3226,14 @@ views.portfolio=function(root){
     root.appendChild(el(`<p class="tiny" style="padding:22px;text-align:center">No photos match “${esc(portfolioState.q)}”.</p>`));
     return;
   }
-  const grid=el(`<div class="grid photos${densityClass()}"></div>`);
-  ordered.forEach((p,i)=>grid.appendChild(portfolioCard(p,ordered,i)));
+  if(portfolioState.reorder)root.appendChild(el(`<p class="tiny" style="margin:-6px 0 10px">⠿ Drag photos into your own order — tap <b>✓ Done</b> when you're happy.</p>`));
+  const grid=el(`<div class="grid photos${densityClass()}${portfolioState.reorder?" reordering":""}"></div>`);
+  ordered.forEach((p,i)=>{const c=portfolioCard(p,ordered,i);c.dataset.oid=p.id;grid.appendChild(c);});
   root.appendChild(grid);
+  if(portfolioState.reorder)makeGridReorderable(grid,cards=>{
+    applySubsetOrder(state.portfolioOrder,cards.map(c=>c.dataset.oid).filter(Boolean));
+    save();
+  });
 };
 
 function portfolioCard(p,list,index){
