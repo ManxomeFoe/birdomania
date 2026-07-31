@@ -32,6 +32,35 @@ header.app{
   background:transparent;border:none;color:#fff7ec;font-size:16px;line-height:1;
 }
 
+/* ---- Install prompt (web only; the APK is already an installed app) ----
+   Sits above the bottom inset and clear of the back-to-top button, under
+   modals (100). Centred and width-capped so it reads as a card on a desktop
+   window instead of a full-width strip. */
+#install-banner{
+  position:fixed;z-index:96;
+  left:50%;transform:translateX(-50%);
+  bottom:calc(16px + var(--android-inset-bottom));
+  width:min(420px, calc(100vw - 32px));
+  box-sizing:border-box;
+  padding:14px 16px;
+  background:var(--paper-2,#efe5cd);
+  color:var(--ink,#2b2117);
+  border:1px solid var(--line,#cdbf9e);
+  border-radius:14px;
+  box-shadow:0 6px 22px rgba(0,0,0,.22);
+  font:14px/1.45 "Avenir Next","Segoe UI",Helvetica,Arial,sans-serif;
+}
+#install-banner b{display:block;font-weight:700;margin-bottom:4px;color:var(--forest,#2f4a3c)}
+#install-banner span{display:block;color:var(--ink-soft,#5a4a37);font-size:13px}
+#install-banner .ib-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+#install-banner .ib-go{background:var(--forest,#2f4a3c);color:#f4ecd8;border-color:var(--forest,#2f4a3c)}
+/* The app's .btn is already a solid forest button, so the dismiss action has to
+   be pulled back explicitly or "Not now" reads as the primary choice. */
+#install-banner .ib-no{
+  background:transparent;color:var(--ink-soft,#5a4a37);
+  border:1px solid var(--line,#cdbf9e);
+}
+
 /* Keep page content clear of the gesture/navigation bar at the bottom and of
    side cutouts (e.g. in landscape). */
 body{

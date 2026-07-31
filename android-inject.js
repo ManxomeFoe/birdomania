@@ -1147,14 +1147,125 @@
     });
   }
 
+  /* ---- 9. Install prompt (browsers only) ----
+     Everything here is for people who open the shared https link rather than
+     the APK — the Android shell is already an installed app, so the whole
+     section no-ops when the bridge is present.
+
+     Two very different paths: Chrome/Edge fire `beforeinstallprompt`, which we
+     stash so we can offer a real Install button at a moment of our choosing;
+     iOS Safari fires nothing at all and can only be told, in words, to use the
+     Share sheet. Anything else (desktop Safari, Firefox) gets no banner —
+     there is nothing useful to say.
+
+     The dismissal flag lives in its OWN localStorage key, deliberately not in
+     `state`: putting it there would carry a UI preference into every export,
+     backup snapshot and friend code. ---- */
+  var INSTALL_KEY = 'birdomania_install_hint_v1';
+  var deferredPrompt = null;
+
+  function isStandalone(){
+    try {
+      return window.matchMedia('(display-mode: standalone)').matches ||
+             window.matchMedia('(display-mode: fullscreen)').matches ||
+             navigator.standalone === true;
+    } catch (e) { return false; }
+  }
+  function isIOS(){
+    // iPadOS 13+ reports itself as a Mac; the touch-point count gives it away.
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+  function installSettled(){
+    try { return localStorage.getItem(INSTALL_KEY) === '1'; } catch (e) { return true; }
+  }
+  function settleInstall(){
+    try { localStorage.setItem(INSTALL_KEY, '1'); } catch (e) {}
+    var b = document.getElementById('install-banner');
+    if (b) b.remove();
+  }
+
+  function canOfferInstall(){
+    return !window.AndroidShell && !isStandalone() && (deferredPrompt || isIOS());
+  }
+
+  function runInstallPrompt(){
+    var p = deferredPrompt;
+    if (!p) return false;
+    deferredPrompt = null;          // a prompt event is single-use
+    try { p.prompt(); if (p.userChoice) p.userChoice.catch(function(){}); } catch (e) {}
+    settleInstall();                // asked once — don't nag either way
+    return true;
+  }
+
+  function showInstallBanner(){
+    if (!canOfferInstall() || installSettled()) return;
+    if (document.getElementById('install-banner')) return;
+
+    var bn = document.createElement('div');
+    bn.id = 'install-banner';
+    bn.innerHTML = isIOS()
+      ? '<b>📲 Add Birdomania to your Home Screen</b>' +
+        '<span>Tap Share, then “Add to Home Screen” — it opens full-screen and ' +
+        'keeps working with no signal in the field.</span>' +
+        '<div class="ib-actions"><button class="btn ib-no">Got it</button></div>'
+      : '<b>📲 Install Birdomania</b>' +
+        '<span>Add it to your device for full-screen, offline birding.</span>' +
+        '<div class="ib-actions"><button class="btn ib-go">Install</button>' +
+        '<button class="btn ib-no">Not now</button></div>';
+    document.body.appendChild(bn);
+
+    bn.querySelector('.ib-no').onclick = settleInstall;
+    var go = bn.querySelector('.ib-go');
+    if (go) go.onclick = function(){ bn.remove(); runInstallPrompt(); };
+  }
+
+  /* Settings row — the banner is a one-shot, so without this there is no way
+     back to an install once it has been dismissed (short of the browser's own
+     buried menu item). Only rendered when an install is actually on offer. */
+  function injectInstallSection(settingsEl){
+    if (settingsEl.querySelector('.install-row')) return;
+    if (!canOfferInstall()) return;
+    var danger = settingsEl.querySelector('.danger-zone');
+    var row = document.createElement('div');
+    row.className = 'set-row col install-row';
+    row.innerHTML =
+      '<div class="set-label"><div class="set-title">Install app</div>' +
+      '<div class="set-desc">' +
+      (isIOS()
+        ? 'Tap Share in Safari, then “Add to Home Screen”, to run Birdomania ' +
+          'full-screen and offline.'
+        : 'Add Birdomania to your device to run it full-screen and offline. ' +
+          'Your birds and photos stay exactly where they are.') +
+      '</div></div>' +
+      (isIOS() ? '' : '<div class="update-actions"><button class="btn" id="instGo">Install</button></div>');
+    if (danger) settingsEl.insertBefore(row, danger); else settingsEl.appendChild(row);
+
+    var go = row.querySelector('#instGo');
+    if (go) go.onclick = function(){
+      if (!runInstallPrompt()) toast('Use your browser menu → “Install app”');
+      else row.remove();
+    };
+  }
+
+  if (!window.AndroidShell) {
+    window.addEventListener('beforeinstallprompt', function(e){
+      e.preventDefault();           // suppress Chrome's own mini-infobar; we choose the moment
+      deferredPrompt = e;
+    });
+    window.addEventListener('appinstalled', settleInstall);
+    // Let a first-time visitor actually look at the app before asking.
+    setTimeout(showInstallBanner, 12000);
+  }
+
   // Wrap the page's openSettings so the modal gains the theme picker + offline
-  // section + update checker + native-backup list.
+  // section + update checker + native-backup list + (on the web) install.
   if (typeof openSettings === 'function') {
     var orig = openSettings;
     window.openSettings = function(){
       orig.apply(this, arguments);
       var s = document.querySelector('#modal-root .settings');
-      if (s) { injectThemeSection(s); injectOfflineSection(s); injectUpdateSection(s); injectBackupSection(s); }
+      if (s) { injectThemeSection(s); injectOfflineSection(s); injectUpdateSection(s); injectBackupSection(s); injectInstallSection(s); }
     };
     var btn = document.getElementById('btnSettings');
     if (btn) btn.onclick = window.openSettings;

@@ -1,0 +1,33 @@
+{
+  "id": "./",
+  "name": "Birdomania — A bird lover's travels",
+  "short_name": "Birdomania",
+  "description": "A field companion for birders: track your life list, log trips, drop map pins where you found each bird, and test yourself with photo and sound quizzes. Works offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4ecd8",
+  "theme_color": "#2f4a3c",
+  "categories": ["education", "lifestyle", "travel"],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

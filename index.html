@@ -6,8 +6,13 @@
 <meta name="theme-color" content="#2f4a3c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Birdmania">
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='31' fill='%232f4a3c'/%3E%3Cpath d='M18 40c6-2 9-6 13-12 2-3 5-6 9-6 3 0 5 2 5 5 0 5-4 9-9 11-4 1.6-8 2-12 2l-3 2 1-4z' fill='%23e9c969'/%3E%3C/svg%3E">
+<meta name="apple-mobile-web-app-title" content="Birdomania">
+<link rel="manifest" href="manifest.webmanifest">
+<!-- iOS ignores SVG apple-touch-icons entirely, so the home-screen icon must be
+     a real PNG. The inline SVG below stays as the tab/standalone-file favicon so
+     this page still has an icon when opened as a lone file with nothing beside it. -->
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='31' fill='%232f4a3c'/%3E%3Cpath d='M18 40c6-2 9-6 13-12 2-3 5-6 9-6 3 0 5 2 5 5 0 5-4 9-9 11-4 1.6-8 2-12 2l-3 2 1-4z' fill='%23e9c969'/%3E%3C/svg%3E">
 <title>Birdomania — A bird lover's travels</title>
 <style>
 :root{
@@ -4718,6 +4723,9 @@ async function resetAllData(){
 document.getElementById("btnSettings").onclick=openSettings;
 function setupPWA(){
   // Inject a web-app manifest at runtime so the single file is installable ("Add to Home Screen").
+  // When this page is served properly there is a real manifest.webmanifest beside it (better
+  // metadata, real PNG icons, a maskable variant) — defer to it and don't add a second link.
+  if(document.querySelector('link[rel="manifest"]'))return;
   try{
     const icon="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232f4a3c'/%3E%3Cpath d='M18 40c6-2 9-6 13-12 2-3 5-6 9-6 3 0 5 2 5 5 0 5-4 9-9 11-4 1.6-8 2-12 2l-3 2 1-4z' fill='%23e9c969'/%3E%3C/svg%3E";
     const manifest={name:"Birdmania",short_name:"Birdmania",start_url:".",display:"standalone",background_color:"#f4ecd8",theme_color:"#2f4a3c",icons:[{src:icon,sizes:"any",type:"image/svg+xml"}]};
@@ -4763,6 +4771,38 @@ window.addEventListener("resize",syncHeaderHeight);
 render();
 // warm a few images for the default region so the first view looks alive
 state.loadedRegions.slice(0,1).forEach(c=>regionBirds(c).slice(0,8).forEach(id=>fetchWiki(id)));
+</script>
+<!-- ============================================================
+     Enhancement layer loader.
+
+     android-inject.css/.js hold everything layered on top of this page:
+     the service worker (offline shell + image/tile byte caches), the
+     debounced save(), the Wikimedia fetch throttle, the batch thumbnail
+     warm-up, extra themes, and the family silhouettes. None of it is
+     Android-specific — the native-only parts (app updates, native
+     backups) already gate themselves on `window.AndroidShell`.
+
+     The Android shell injects these same two files after onPageFinished
+     using these exact element ids, so whichever side runs first wins and
+     the other becomes a no-op (android-inject.js also self-guards on
+     window.__birdomaniaInjected). Loading them here is what makes the
+     hosted page a real installable web app in any browser.
+
+     This block sits AFTER the app's own script on purpose: the inject
+     layer wraps globals (openSettings, applyTheme, birdSVG, save) that
+     must already exist when it runs.
+     ============================================================ -->
+<script>
+(function(){
+  if(!document.getElementById('android-inject-css')){
+    var l=document.createElement('link');l.id='android-inject-css';
+    l.rel='stylesheet';l.href='android-inject.css';document.head.appendChild(l);
+  }
+  if(!document.getElementById('android-inject-js')){
+    var s=document.createElement('script');s.id='android-inject-js';
+    s.src='android-inject.js';document.body.appendChild(s);
+  }
+})();
 </script>
 </body>
 </html>

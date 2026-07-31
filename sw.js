@@ -6,9 +6,14 @@
    a push). Cross-origin requests (Wikipedia / Wikimedia bird photos) are left
    untouched — the app manages those itself (live fetch + IndexedDB offline
    store). */
-const CACHE = 'birdomania-shell-v3';   // v3: + self-hosted Leaflet (Field Map tab)
+const CACHE = 'birdomania-shell-v4';   // v4: + web manifest and install icons
 const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js',
-               'leaflet.js', 'leaflet.css'];
+               'leaflet.js', 'leaflet.css',
+               // Installed copies must be able to re-read these with no
+               // network — an uncached manifest/icon makes an installed PWA
+               // look broken in the launcher after an offline update.
+               'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
+               'icon-maskable-512.png', 'icon-180.png'];
 
 /* Bird-image byte cache (v3): upload.wikimedia.org thumbnails are served
    cache-first from Cache Storage, so every previously-seen bird paints
