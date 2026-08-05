@@ -276,6 +276,27 @@ body.dark .grid-toggle:hover{background:rgba(127,174,146,.12)}
 .detail-section h4{font-size:13px;letter-spacing:.6px;text-transform:uppercase;color:var(--umber);margin-bottom:6px;border-bottom:1px solid var(--line);padding-bottom:5px}
 .detail-section p{margin:0 0 4px;line-height:1.55;font-size:14.5px}
 .season-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}
+/* ---- Seasonality ---- */
+.season-pill{background:rgba(120,100,60,.14);color:var(--umber);font-weight:600}
+.season-pill.s-r{background:rgba(47,74,60,.13);color:var(--forest)}
+.season-pill.s-b{background:rgba(154,122,40,.16);color:#7d6222}
+.season-pill.s-w{background:rgba(70,110,140,.16);color:#3d6480}
+.season-pill.s-m{background:rgba(150,90,50,.15);color:#8a4f28}
+.season-pill.s-x{background:rgba(150,60,50,.14);color:var(--rare)}
+.season-strip{display:flex;gap:3px;margin-top:8px}
+.season-strip .ms{flex:1;text-align:center;font-size:10px;font-weight:700;letter-spacing:.02em;
+  padding:4px 0;border-radius:4px;background:var(--paper-2);color:var(--ink-soft);opacity:.5}
+.season-strip .ms.on{background:var(--forest);color:#fff;opacity:1}
+.season-strip .ms.now{outline:2px solid var(--gold);outline-offset:1px}
+.season-rows{display:flex;flex-direction:column;gap:12px}
+.season-row{border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:var(--paper)}
+.season-row.active{border-color:var(--forest-light);background:rgba(47,74,60,.05)}
+.sr-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sr-reg{font-weight:700;font-size:14px;color:var(--ink)}
+.sr-now{font-size:12px;color:var(--forest);margin-top:7px;font-weight:600}
+.sr-now.off{color:var(--ink-soft);font-weight:500}
+.season-note{font-size:12px;color:var(--ink-soft);margin-top:6px}
+
 .season{font-size:12px;font-weight:700;padding:4px 10px;border-radius:20px;background:rgba(67,106,85,.13);color:var(--forest)}
 .voice-box{background:#f1e7cf;border-left:3px solid var(--gold);padding:11px 14px;border-radius:0 8px 8px 0;font-style:italic;font-family:var(--serif);font-size:14.5px;color:var(--ink-soft)}
 
@@ -1270,7 +1291,7 @@ const DEFAULT_STATE={
   seenOrder:[],              // birdId[] — the user's custom Seen arrangement
   portfolioSort:"date",      // Portfolio order: 'date' | 'az' | 'custom'
   portfolioOrder:[],         // portfolio entry id[] — the user's custom arrangement
-  prefs:{theme:"light",nameMode:"both"}  // user preferences (theme; nameMode: 'common'|'sci'|'both')
+  prefs:{theme:"light",nameMode:"both",seasonFilter:""}  // user preferences (theme; nameMode: 'common'|'sci'|'both')
 };
 let state=load();
 function load(){
@@ -2536,7 +2557,7 @@ function addSeenManuallyDialog(){
 /* ============================================================
    VIEW: LISTS
    ============================================================ */
-let listState={region:null,sub:null,q:"",fSize:"",fColor:"",fSeason:""};
+let listState={region:null,sub:null,q:"",fSize:"",fColor:""};
 function listOptions(){
   // returns [{value, label, kind}] for region selector: loaded regions + custom lists
   const opts=[];
@@ -2549,16 +2570,634 @@ function pickStateFromMap(code){
   if(!state.loadedRegions.includes(code)&&(REGION_NAMES[code]||state.customRegions[code])){
     state.loadedRegions.push(code);checkMilestones(true);save();toast(`${regionName(code)} added`);
   }
-  listState.region="region:"+code;listState.sub=null;listState.q="";listState.fSize="";listState.fColor="";listState.fSeason="";
+  listState.region="region:"+code;listState.sub=null;listState.q="";listState.fSize="";listState.fColor="";
   render();
 }
-function listBirdMatchesFilters(b){
+function listBirdMatchesFilters(id,b,code){
   if(listState.fSize&&sizeBucket(b)!==listState.fSize)return false;
   if(listState.fColor&&colorName(b.col)!==listState.fColor)return false;
-  if(listState.fSeason&&!(b.sea||[]).includes(listState.fSeason))return false;
+  if(!birdMatchesSeason(id,code,seasonFilter()))return false;
   return true;
 }
-const LIST_SEASONS=["Year-round","Spring","Summer","Fall","Winter","Migration"];
+const SEASON_DATA={
+"acadian-flycatcher":{PA:"5-9b"},
+"acorn-woodpecker":{CA:"1-12r"},
+"alder-flycatcher":{AK:"5-9b",PA:"5-9b"},
+"aleutian-tern":{AK:"5-9b"},
+"american-avocet":{PA:"4-10x"},
+"american-barn-owl":{PA:"1-12r"},
+"american-bittern":{PA:"3-11b"},
+"american-black-duck":{MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"american-coot":{PA:"9-5w"},
+"american-crow":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"american-dipper":{AK:"1-12r",WA:"1-12r"},
+"american-golden-plover":{AK:"5-9b",NY:"4-5,7-11m",PA:"4-5,7-11m",MA:"4-5,7-11m"},
+"american-goldfinch":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r"},
+"american-kestrel":{AK:"4-9b",WA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"american-oystercatcher":{MA:"3-11b",NY:"3-12b",PA:"4-9x",TX:"1-12r",FL:"1-12r"},
+"american-pipit":{AK:"5-9b",WA:"1-12w",CA:"1-12w",NY:"9-5m",PA:"9-5m",MA:"9-5m"},
+"american-redstart":{MA:"5-10b",NY:"5-10b",PA:"4-10b",TX:"4-5,8-10m"},
+"american-robin":{AK:"4-10b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"10-4w"},
+"american-three-toed-woodpecker":{AK:"1-12r",PA:"10-3x"},
+"american-tree-sparrow":{AK:"4-9b",MA:"10-4w",PA:"10-4w"},
+"american-white-pelican":{PA:"4-11x"},
+"american-wigeon":{AK:"4-10b",WA:"8-5w",CA:"9-5w",MA:"9-5w",PA:"9-5w"},
+"american-woodcock":{MA:"3-11b",NY:"3-11b",PA:"2-11b",TX:"10-3w",FL:"10-3w"},
+"ancient-murrelet":{AK:"1-12r",PA:"10-1x"},
+"anhinga":{FL:"1-12r",PA:"4-9x"},
+"annas-hummingbird":{WA:"1-12r",CA:"1-12r",PA:"10-1x"},
+"arctic-loon":{AK:"5-9b"},
+"arctic-tern":{AK:"5-9b",PA:"4-6,8-9x"},
+"arctic-warbler":{AK:"5-8b"},
+"asian-brown-flycatcher":{AK:"5-6,8-9x"},
+"asian-rosy-finch":{AK:"4-6,9-11x"},
+"baikal-teal":{AK:"4-6,9-10x"},
+"bairds-sandpiper":{AK:"5-9b",WA:"4-5,7-10m",TX:"3-5,7-10m",NY:"4-5,7-10m",PA:"4-5,7-10m",MA:"4-5,7-10m"},
+"bald-eagle":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"baltimore-oriole":{MA:"5-9b",NY:"5-9b",PA:"4-9b"},
+"bank-swallow":{AK:"5-8b",MA:"4-9b",PA:"4-9b"},
+"bar-tailed-godwit":{AK:"5-9b"},
+"barn-swallow":{AK:"5-9b",WA:"3-10b",CA:"2-10b",TX:"3-10b",FL:"2-11m",NY:"4-10b",PA:"4-10b",MA:"4-10b"},
+"barnacle-goose":{PA:"10-4x"},
+"barred-owl":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"barrows-goldeneye":{AK:"1-12r",WA:"9-5w",MA:"11-4w",PA:"11-3x"},
+"bay-breasted-warbler":{AK:"5-6,8-9x",MA:"5-6,8-10m",PA:"5-6,8-10m"},
+"belted-kingfisher":{AK:"4-10b",WA:"1-12r",MA:"1-12r",PA:"1-12r"},
+"black-and-white-warbler":{MA:"4-10b",NY:"4-10b",PA:"4-10b",TX:"3-5,8-10m",FL:"8-5w"},
+"black-backed-woodpecker":{AK:"1-12r",WA:"1-12r",CA:"1-12r",PA:"10-3x"},
+"black-bellied-plover":{AK:"5-9b",WA:"1-12w",MA:"4-12m",NY:"4-12m",PA:"4-5,8-11m",CA:"1-12w",TX:"1-12w",FL:"1-12w"},
+"black-bellied-whistling-duck":{PA:"4-10x"},
+"black-billed-cuckoo":{PA:"5-9b"},
+"black-billed-magpie":{AK:"1-12r",WA:"1-12r"},
+"black-capped-chickadee":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"black-crowned-night-heron":{MA:"3-11b",NY:"1-12r",PA:"3-11b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"black-faced-bunting":{AK:"5-6,9-10x"},
+"black-guillemot":{AK:"1-12r",MA:"10-4w",NY:"11-3x",PA:"11-2x"},
+"black-headed-gull":{AK:"5-9x",MA:"10-4w",PA:"11-3x"},
+"black-legged-kittiwake":{AK:"1-12r",PA:"10-2x"},
+"black-necked-stilt":{PA:"4-8x"},
+"black-oystercatcher":{AK:"1-12r",WA:"1-12r"},
+"black-phoebe":{CA:"1-12r"},
+"black-scoter":{AK:"1-12r",WA:"10-5w",MA:"9-5w",NY:"9-5w",PA:"10-4x",CA:"10-4w"},
+"black-tailed-godwit":{AK:"5-9x",PA:"4-5,8-9x"},
+"black-tailed-gull":{AK:"5-9x"},
+"black-tern":{PA:"5-9m"},
+"black-throated-blue-warbler":{MA:"5-10b",NY:"5-10b",PA:"4-10b"},
+"black-throated-green-warbler":{MA:"4-10b",NY:"4-10b",PA:"4-10b"},
+"black-throated-thrush":{AK:"9-3x"},
+"black-turnstone":{AK:"1-12r"},
+"black-vulture":{MA:"1-12x",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"blackburnian-warbler":{PA:"4-10b"},
+"blackpoll-warbler":{AK:"5-9b",MA:"5-10m",PA:"4-6,9-10m"},
+"blue-gray-gnatcatcher":{MA:"4-9b",NY:"4-9b",PA:"4-9b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"blue-grosbeak":{PA:"5-9b"},
+"blue-headed-vireo":{MA:"4-10b",NY:"4-10b",PA:"4-10b"},
+"blue-jay":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"blue-winged-teal":{MA:"3-11m",NY:"3-11b",PA:"3-11m",TX:"8-5w",FL:"8-5w"},
+"blue-winged-warbler":{PA:"4-9b"},
+"bluethroat":{AK:"5-8b"},
+"bobolink":{MA:"5-9b",NY:"5-9b",PA:"4-9b"},
+"bohemian-waxwing":{AK:"1-12r",PA:"11-3x"},
+"bonapartes-gull":{AK:"5-9b",WA:"8-5w",CA:"9-5w",NY:"9-5m",PA:"9-5m",MA:"9-5m"},
+"boreal-chickadee":{AK:"1-12r",PA:"10-3x"},
+"boreal-owl":{AK:"1-12r",PA:"11-3x"},
+"brambling":{AK:"4-6,9-1x",PA:"10-3x"},
+"brant":{AK:"4-10b",MA:"10-5w",PA:"10-4x"},
+"bristle-thighed-curlew":{AK:"5-8b"},
+"broad-winged-hawk":{MA:"4-10b",NY:"4-10b",PA:"4-10b",TX:"3-5,8-10m",FL:"9-4m"},
+"brown-creeper":{AK:"1-12r",WA:"1-12r",CA:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"brown-headed-cowbird":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"brown-pelican":{FL:"1-12r",CA:"1-12r",PA:"5-10x"},
+"brown-shrike":{AK:"5-6,9-10x"},
+"brown-thrasher":{MA:"4-10b",NY:"4-10b",PA:"4-10b",TX:"1-12r",FL:"1-12r"},
+"buff-breasted-sandpiper":{AK:"5-9b",MA:"8-10m",PA:"5,8-10m"},
+"bufflehead":{AK:"1-12r",WA:"10-5w",CA:"10-4w",MA:"10-5w",PA:"10-5w"},
+"bull-headed-shrike":{AK:"4-5,9-10x"},
+"cackling-goose":{AK:"4-10b",WA:"9-5w",CA:"9-4w",TX:"10-3w",MA:"10-4w",PA:"10-4w"},
+"california-quail":{CA:"1-12r"},
+"california-scrub-jay":{CA:"1-12r"},
+"canada-goose":{AK:"3-11b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"canada-jay":{AK:"1-12r"},
+"canada-warbler":{MA:"5-9b",NY:"5-9b",PA:"5-9b"},
+"canvasback":{AK:"4-10b",WA:"10-4w",CA:"10-4w",TX:"10-4w",NY:"10-4w",PA:"10-4w",MA:"10-4w"},
+"cape-may-warbler":{PA:"4-5,8-10m"},
+"carolina-chickadee":{PA:"1-12r"},
+"carolina-wren":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"caspian-tern":{PA:"4-10m"},
+"cedar-waxwing":{AK:"5-9b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"cerulean-warbler":{PA:"4-9b"},
+"chestnut-backed-chickadee":{AK:"1-12r",WA:"1-12r"},
+"chestnut-bunting":{AK:"5-6,9-10x"},
+"chestnut-sided-warbler":{MA:"4-10b",NY:"4-10b",PA:"4-10b"},
+"chimney-swift":{MA:"4-10b",NY:"4-10b",PA:"4-10b",TX:"3-11b",FL:"3-11b"},
+"chipping-sparrow":{MA:"4-11b",NY:"4-11b",PA:"3-11b",CA:"1-12r",TX:"1-12r",FL:"9-4w"},
+"chuck-wills-widow":{PA:"4-9x"},
+"citrine-wagtail":{AK:"5-6,8-9x"},
+"clay-colored-sparrow":{PA:"4-5,9-11m"},
+"cliff-swallow":{AK:"5-8b",MA:"4-9b",PA:"4-9b"},
+"common-chiffchaff":{AK:"5-6,9-10x"},
+"common-cuckoo":{AK:"5-9x"},
+"common-eider":{AK:"1-12r",MA:"1-12r",PA:"11-3x"},
+"common-gallinule":{PA:"4-10b"},
+"common-goldeneye":{AK:"1-12r",MA:"10-4w",PA:"10-4w"},
+"common-grackle":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"common-greenshank":{AK:"5-6,8-9x"},
+"common-house-martin":{AK:"5-7x"},
+"common-loon":{AK:"4-11b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"10-5m"},
+"common-merganser":{AK:"1-12r",WA:"1-12r",MA:"1-12r",PA:"1-12r"},
+"common-murre":{AK:"1-12r"},
+"common-nighthawk":{PA:"5-9b"},
+"common-raven":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"common-redpoll":{AK:"1-12r",WA:"11-3w",MA:"10-4w",PA:"11-4w"},
+"common-redshank":{AK:"5-6x"},
+"common-ringed-plover":{AK:"5-8b"},
+"common-rosefinch":{AK:"5-7,9x"},
+"common-sandpiper":{AK:"5-8x"},
+"common-snipe":{AK:"5-9x"},
+"common-tern":{AK:"5-8x",MA:"4-10b",PA:"4-5,8-10m"},
+"common-yellowthroat":{MA:"4-10b",NY:"4-10b",PA:"4-10b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"connecticut-warbler":{PA:"5,8-10m"},
+"coopers-hawk":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"crested-auklet":{AK:"1-12r"},
+"curlew-sandpiper":{AK:"5-9x",PA:"5,7-9x"},
+"dark-eyed-junco":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"dark-sided-flycatcher":{AK:"5-6,9x"},
+"dickcissel":{PA:"5-9x"},
+"double-crested-cormorant":{AK:"1-12r",WA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r",NY:"1-12r",PA:"3-11b",MA:"1-12r"},
+"dovekie":{MA:"11-3w",NY:"11-3w",PA:"11-2x"},
+"downy-woodpecker":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r"},
+"dunlin":{AK:"4-10b",MA:"8-5w",PA:"4-5,7-11m"},
+"dusky-thrush":{AK:"4-5,9-12x"},
+"dusky-warbler":{AK:"5-6,8-10x"},
+"eared-grebe":{PA:"10-4x"},
+"eastern-bluebird":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"eastern-kingbird":{MA:"5-9b",NY:"5-9b",PA:"4-9b",TX:"4-10b",FL:"3-10b"},
+"eastern-meadowlark":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"eastern-phoebe":{MA:"3-11b",NY:"3-11b",PA:"3-11b",TX:"1-12r",FL:"9-4w"},
+"eastern-screech-owl":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"eastern-towhee":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"eastern-whip-poor-will":{PA:"4-9b"},
+"eastern-wood-pewee":{MA:"5-9b",NY:"5-9b",PA:"5-9b",TX:"4-10b",FL:"4-5,8-10m"},
+"eastern-yellow-wagtail":{AK:"5-9b"},
+"emperor-goose":{AK:"1-12r"},
+"eurasian-bullfinch":{AK:"10-5x"},
+"eurasian-collared-dove":{PA:"1-12r"},
+"eurasian-dotterel":{AK:"5-9x"},
+"eurasian-hobby":{AK:"5-9x"},
+"eurasian-siskin":{AK:"4-6,9-10x"},
+"eurasian-skylark":{AK:"4-6,9-10x"},
+"eurasian-wigeon":{AK:"4-10m",CA:"10-4w",WA:"9-4w",MA:"10-4x",PA:"10-4x"},
+"eurasian-wryneck":{AK:"5-6,9x"},
+"european-golden-plover":{AK:"5-6x"},
+"european-starling":{AK:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"evening-grosbeak":{PA:"10-5w"},
+"eyebrowed-thrush":{AK:"5-6,9-10x"},
+"falcated-duck":{AK:"4-6,9-10x"},
+"field-sparrow":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r"},
+"fieldfare":{AK:"10-5x"},
+"fish-crow":{PA:"1-12r"},
+"florida-scrub-jay":{FL:"1-12r"},
+"fork-tailed-storm-petrel":{AK:"4-10b"},
+"fork-tailed-swift":{AK:"5-8x"},
+"forsters-tern":{PA:"4-5,7-11m"},
+"fox-sparrow":{AK:"4-10b",MA:"10-4w",PA:"10-4w"},
+"franklins-gull":{PA:"4-5,9-11x"},
+"gadwall":{AK:"4-10b",WA:"1-12r",CA:"1-12r",TX:"8-5w",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"garganey":{AK:"5-7x",PA:"3-5x"},
+"glaucous-gull":{AK:"1-12r",PA:"11-4x"},
+"glaucous-winged-gull":{AK:"1-12r",WA:"1-12r",PA:"11-3x"},
+"glossy-ibis":{MA:"4-9b",NY:"4-10b",PA:"4-9x",TX:"1-12r",FL:"1-12r"},
+"golden-crowned-kinglet":{AK:"1-12r",WA:"1-12r",MA:"1-12r",PA:"1-12r"},
+"golden-crowned-sparrow":{AK:"4-9b",PA:"10-3x"},
+"golden-eagle":{AK:"1-12r",PA:"10-4w"},
+"golden-winged-warbler":{PA:"4-9b"},
+"grasshopper-sparrow":{PA:"4-10b"},
+"gray-bunting":{AK:"5-6x"},
+"gray-catbird":{MA:"4-11b",NY:"4-11b",PA:"4-11b",TX:"9-5m",FL:"9-5w"},
+"gray-cheeked-thrush":{AK:"5-9b",MA:"5-6,8-10m",PA:"5-6,8-10m"},
+"gray-crowned-rosy-finch":{AK:"1-12r",PA:"11-3x"},
+"gray-streaked-flycatcher":{AK:"5-6,9x"},
+"gray-tailed-tattler":{AK:"5-8x"},
+"gray-wagtail":{AK:"5-6,9x"},
+"great-black-backed-gull":{MA:"1-12r",NY:"1-12r",PA:"9-4w"},
+"great-blue-heron":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"great-cormorant":{MA:"9-5w",NY:"9-5w",PA:"10-4x"},
+"great-crested-flycatcher":{MA:"5-9b",NY:"5-9b",PA:"4-9b",TX:"4-10b",FL:"1-12r"},
+"great-egret":{MA:"4-11b",NY:"3-11b",PA:"4-11b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"great-gray-owl":{AK:"1-12r",PA:"11-3x"},
+"great-horned-owl":{AK:"1-12r",MA:"1-12r",PA:"1-12r"},
+"great-knot":{AK:"5-8x"},
+"great-tailed-grackle":{TX:"1-12r"},
+"greater-roadrunner":{TX:"1-12r"},
+"greater-scaup":{AK:"4-11b",WA:"10-5w",NY:"10-5w",PA:"10-4w",CA:"10-4w",MA:"10-5w"},
+"greater-white-fronted-goose":{AK:"4-10b",PA:"10-4w"},
+"greater-yellowlegs":{AK:"5-9b",MA:"3-5,7-12m",PA:"3-5,7-11m"},
+"green-heron":{MA:"4-10b",NY:"4-10b",PA:"4-10b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"green-sandpiper":{AK:"5-6,8-9x"},
+"green-winged-teal":{AK:"4-10b",WA:"8-5w",CA:"8-5w",MA:"8-5w",PA:"8-5w"},
+"gyrfalcon":{AK:"1-12r",PA:"11-3x"},
+"hairy-woodpecker":{AK:"1-12r",WA:"1-12r",MA:"1-12r"},
+"harlequin-duck":{AK:"1-12r",WA:"1-12r",MA:"10-5w",PA:"11-4x"},
+"harriss-sparrow":{PA:"10-4x"},
+"hawfinch":{AK:"4-6,9-11x"},
+"henslows-sparrow":{PA:"4-9b"},
+"hermit-thrush":{AK:"5-9b",MA:"3-12b",PA:"3-12b"},
+"herring-gull":{AK:"1-12r",MA:"1-12r"},
+"hoary-redpoll":{AK:"1-12r"},
+"hooded-merganser":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"10-4w",FL:"10-4w"},
+"hooded-warbler":{PA:"4-9b"},
+"horned-grebe":{AK:"3-11b",MA:"10-5w",PA:"10-5m"},
+"horned-lark":{AK:"5-9b",WA:"1-12r",CA:"1-12r",TX:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"horned-puffin":{AK:"5-9b"},
+"house-finch":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"house-sparrow":{PA:"1-12r"},
+"house-wren":{MA:"4-10b",NY:"4-10b",PA:"4-10b",CA:"1-12r",TX:"1-12r"},
+"hudsonian-godwit":{AK:"5-8b",MA:"5,7-11m",PA:"5,8-10x"},
+"iceland-gull":{AK:"10-5w",MA:"11-4w",PA:"11-4w"},
+"indigo-bunting":{MA:"5-9b",NY:"5-9b",PA:"5-9b",TX:"4-10b",FL:"3-5,9-1m"},
+"ivory-gull":{AK:"10-4w"},
+"jack-snipe":{AK:"5-6,8-9x"},
+"kentucky-warbler":{PA:"5-9b"},
+"killdeer":{AK:"4-9b",WA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r",NY:"2-12b",PA:"2-12b",MA:"3-12b"},
+"king-eider":{AK:"1-12r",MA:"11-4w",PA:"11-3x"},
+"kittlitz-murrelet":{AK:"4-9b"},
+"lanceolated-warbler":{AK:"5-6,8-9x"},
+"lapland-longspur":{AK:"5-9b",PA:"10-4w"},
+"lark-sparrow":{PA:"4-5,8-10x"},
+"laughing-gull":{MA:"4-11b",NY:"4-11b",PA:"5-10x",TX:"1-12r",FL:"1-12r"},
+"laysan-albatross":{AK:"4-10m"},
+"leachs-storm-petrel":{AK:"5-9b",PA:"8-10x"},
+"least-auklet":{AK:"4-9b"},
+"least-bittern":{PA:"5-9b"},
+"least-flycatcher":{MA:"5-9b",NY:"5-9b",PA:"5-9b"},
+"least-sandpiper":{AK:"5-8b",MA:"4-5,7-10m",PA:"4-5,7-10m"},
+"least-tern":{MA:"5-9b",NY:"5-9b",PA:"5-9x",TX:"4-9b",FL:"3-10b"},
+"lesser-black-backed-gull":{PA:"9-5w"},
+"lesser-sand-plover":{AK:"5-8x"},
+"lesser-scaup":{AK:"4-10b",WA:"9-5w",CA:"9-5w",TX:"9-4w",NY:"10-5w",PA:"10-5w",MA:"10-5w"},
+"lesser-yellowlegs":{AK:"5-8b",MA:"4-5,7-11m",PA:"4-5,7-10m"},
+"lincolns-sparrow":{AK:"5-9b",MA:"4-5,9-11m",PA:"4-5,9-11m"},
+"little-blue-heron":{MA:"4-10b",NY:"4-10b",PA:"5-9x",TX:"1-12r",FL:"1-12r"},
+"little-bunting":{AK:"5-6,8-10x"},
+"little-gull":{PA:"11-5x"},
+"little-stint":{AK:"5-9x",PA:"7-9x"},
+"loggerhead-shrike":{PA:"9-5x"},
+"long-billed-dowitcher":{AK:"5-9b",WA:"3-5,7-12m",CA:"8-5w",TX:"8-5w",MA:"8-11m",PA:"4-5,8-11m"},
+"long-billed-murrelet":{AK:"6-10x",PA:"9-12x"},
+"long-eared-owl":{PA:"10-4w"},
+"long-tailed-duck":{AK:"1-12r",PA:"11-4w"},
+"long-tailed-jaeger":{AK:"5-9b",PA:"8-10x"},
+"long-toed-stint":{AK:"5-8x"},
+"louisiana-waterthrush":{PA:"4-8b"},
+"macgillivrays-warbler":{AK:"5-8b",WA:"5-9b",CA:"4-10b",PA:"5,9-10x"},
+"magnolia-warbler":{MA:"5-10b",NY:"5-10b",PA:"5-10b"},
+"mallard":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"marbled-murrelet":{AK:"1-12r",WA:"1-12r"},
+"marsh-sandpiper":{AK:"5-6,8-9x"},
+"marsh-wren":{MA:"4-11b",NY:"4-11b",PA:"4-10b",CA:"1-12r",TX:"1-12r"},
+"mckays-bunting":{AK:"11-4w"},
+"merlin":{AK:"4-10b",PA:"1-12r"},
+"middendorffs-grasshopper-warbler":{AK:"5-9x"},
+"mississippi-kite":{PA:"4-9x"},
+"mottled-petrel":{AK:"4-10m"},
+"mourning-dove":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"mourning-warbler":{PA:"5-9b"},
+"mugimaki-flycatcher":{AK:"5-6,9-10x"},
+"mute-swan":{MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"nashville-warbler":{PA:"4-10m"},
+"naumanns-thrush":{AK:"10-5x"},
+"nelsons-sparrow":{PA:"5,9-11m"},
+"northern-cardinal":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"northern-flicker":{AK:"4-10b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r"},
+"northern-fulmar":{AK:"1-12r",MA:"10-5w",PA:"10-1x"},
+"northern-gannet":{MA:"9-5w",NY:"9-5w",PA:"3-4,10-12x"},
+"northern-goshawk":{AK:"1-12r"},
+"northern-harrier":{AK:"4-10b",MA:"1-12r",PA:"1-12r"},
+"northern-hawk-owl":{AK:"1-12r",PA:"11-3x"},
+"northern-mockingbird":{CA:"1-12r",TX:"1-12r",FL:"1-12r",PA:"1-12r"},
+"northern-parula":{MA:"5-9b",NY:"5-9b",PA:"4-9b",TX:"3-10b",FL:"1-12r"},
+"northern-pintail":{AK:"4-10b",WA:"9-5w",CA:"8-4w",TX:"9-4w",MA:"9-5w",PA:"9-5m"},
+"northern-rough-winged-swallow":{PA:"4-9b"},
+"northern-saw-whet-owl":{AK:"1-12r",WA:"1-12r",CA:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"northern-shoveler":{AK:"4-10b",WA:"9-5w",CA:"8-5w",MA:"9-5w",PA:"9-5m"},
+"northern-shrike":{AK:"1-12r",MA:"10-4w",PA:"10-4w"},
+"northern-waterthrush":{AK:"5-8b",MA:"4-10b",PA:"4-10b"},
+"northern-wheatear":{AK:"5-9b",PA:"9-10x"},
+"olive-backed-pipit":{AK:"5-6,9-10x"},
+"olive-sided-flycatcher":{AK:"5-8b",MA:"5-9b",PA:"5-9m"},
+"orange-crowned-warbler":{AK:"4-9b",PA:"4-5,9-12m"},
+"orchard-oriole":{MA:"5-8b",NY:"5-9b",PA:"5-9b",TX:"4-9b",FL:"3-5,7-10m"},
+"oriental-cuckoo":{AK:"5-9x"},
+"oriental-greenfinch":{AK:"4-6,9-10x"},
+"oriental-turtle-dove":{AK:"4-6,10-11x"},
+"osprey":{AK:"5-9b",MA:"3-11b",PA:"3-11b"},
+"ovenbird":{MA:"5-9b",NY:"5-9b",PA:"4-9b",TX:"4-5,8-10m"},
+"pacific-golden-plover":{AK:"5-9b",PA:"8-11x"},
+"pacific-loon":{AK:"4-11b",WA:"9-5w",PA:"10-3x"},
+"pacific-slope-flycatcher":{AK:"5-8b",WA:"4-9b",CA:"3-10b",PA:"5,9-11x"},
+"pacific-wren":{AK:"1-12r",WA:"1-12r"},
+"painted-bunting":{TX:"4-9b",FL:"1-12r",PA:"4-6,9-11x"},
+"pallas-bunting":{AK:"5-6,9-10x"},
+"pallass-grasshopper-warbler":{AK:"6,8-10x"},
+"pallass-leaf-warbler":{AK:"8-10x"},
+"pallass-rosefinch":{AK:"10-5x"},
+"palm-warbler":{PA:"4-5,8-11m"},
+"parakeet-auklet":{AK:"4-9b"},
+"parasitic-jaeger":{AK:"5-9b",MA:"5-11m",PA:"8-11x"},
+"pechora-pipit":{AK:"8-10x"},
+"pectoral-sandpiper":{AK:"5-9b",NY:"3-5,7-11m",PA:"3-5,7-11m",TX:"3-5,7-11m",MA:"4-5,7-11m"},
+"pelagic-cormorant":{AK:"1-12r",WA:"1-12r"},
+"peregrine-falcon":{AK:"4-10b",PA:"1-12r"},
+"philadelphia-vireo":{PA:"5,8-10m"},
+"pied-billed-grebe":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"pigeon-guillemot":{AK:"1-12r",WA:"1-12r"},
+"pileated-woodpecker":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",FL:"1-12r"},
+"pin-tailed-snipe":{AK:"5-6,8-10x"},
+"pine-grosbeak":{AK:"1-12r",PA:"11-3w"},
+"pine-siskin":{AK:"1-12r",WA:"1-12r",MA:"9-5w",PA:"9-5w"},
+"pine-warbler":{MA:"4-10b",NY:"4-10b",PA:"4-10b",TX:"1-12r",FL:"1-12r"},
+"pink-footed-goose":{PA:"11-4x"},
+"piping-plover":{MA:"3-9b",NY:"3-9b",PA:"4-5,8-9x"},
+"pomarine-jaeger":{AK:"5-10b",MA:"5-6,9-12m",PA:"9-12x"},
+"prairie-warbler":{MA:"5-9b",NY:"5-9b",PA:"4-9b",FL:"1-12r"},
+"prothonotary-warbler":{PA:"4-9b"},
+"purple-finch":{MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"purple-martin":{PA:"3-9b"},
+"purple-sandpiper":{PA:"11-4x"},
+"razorbill":{MA:"10-4w",NY:"11-4w"},
+"red-bellied-woodpecker":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"red-breasted-merganser":{AK:"4-10b",WA:"9-5w",MA:"10-5w",PA:"10-5w"},
+"red-breasted-nuthatch":{AK:"1-12r",WA:"1-12r",CA:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"red-breasted-sapsucker":{AK:"1-12r",WA:"1-12r",CA:"1-12r"},
+"red-crossbill":{AK:"1-12r",WA:"1-12r",CA:"1-12r",NY:"1-12r",PA:"1-12r",MA:"1-12r"},
+"red-eyed-vireo":{MA:"5-10b",NY:"5-10b",PA:"4-10b",TX:"4-10b",FL:"3-11b"},
+"red-faced-cormorant":{AK:"1-12r"},
+"red-flanked-bluetail":{AK:"5-6,9-10x"},
+"red-headed-woodpecker":{PA:"1-12r"},
+"red-knot":{AK:"5-8b",MA:"5-11m",NY:"5-11m",PA:"5,8-10x",TX:"8-5w",FL:"8-5w"},
+"red-legged-kittiwake":{AK:"4-10b"},
+"red-necked-grebe":{AK:"4-10b",MA:"10-4w",PA:"10-4w"},
+"red-necked-phalarope":{AK:"5-9b",PA:"5,8-10x"},
+"red-necked-stint":{AK:"5-8x"},
+"red-phalarope":{AK:"5-9b",MA:"9-5m",PA:"9-12x"},
+"red-shouldered-hawk":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"red-tailed-hawk":{AK:"3-10b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"red-throated-loon":{AK:"5-10b",PA:"10-5m"},
+"red-throated-pipit":{AK:"5-9b"},
+"red-winged-blackbird":{AK:"4-9b",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"redhead":{PA:"10-4w"},
+"redwing":{AK:"10-5x",PA:"11-4x"},
+"rhinoceros-auklet":{AK:"4-9b",WA:"1-12r",CA:"1-12r"},
+"ring-billed-gull":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"8-5w",FL:"8-5w"},
+"ring-necked-duck":{MA:"9-5w",NY:"9-5w",PA:"9-5w",CA:"9-5w",FL:"10-4w"},
+"ring-necked-pheasant":{PA:"1-12r"},
+"rock-pigeon":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"rock-ptarmigan":{AK:"1-12r"},
+"rock-sandpiper":{AK:"1-12r"},
+"rose-breasted-grosbeak":{AK:"5-6,9-10x",MA:"5-10b",PA:"4-10b"},
+"roseate-spoonbill":{FL:"1-12r",PA:"6-9x"},
+"roseate-tern":{MA:"5-9b",NY:"5-9b",PA:"5,8-9x"},
+"rosss-goose":{PA:"11-4w"},
+"rosss-gull":{AK:"6,9-11x",PA:"11-2x"},
+"rough-legged-hawk":{AK:"4-10b",MA:"10-4w",PA:"10-4w"},
+"ruby-crowned-kinglet":{AK:"4-10b",MA:"9-5w",PA:"9-5w"},
+"ruby-throated-hummingbird":{MA:"5-10b",NY:"5-10b",PA:"4-10b",TX:"3-10b",FL:"1-12r"},
+"ruddy-duck":{MA:"9-5w",NY:"9-5w",PA:"9-5w",CA:"1-12r",TX:"9-5w",FL:"10-4w"},
+"ruddy-turnstone":{AK:"5-9b",WA:"4-5,7-10m",MA:"5-11m",NY:"5-11m",PA:"5,8-9x",CA:"7-5w",FL:"1-12w"},
+"ruff":{AK:"5-9x",PA:"4-5,7-10x"},
+"ruffed-grouse":{AK:"1-12r",MA:"1-12r",PA:"1-12r"},
+"rufous-hummingbird":{AK:"4-8b",WA:"3-9b",PA:"9-1x"},
+"rustic-bunting":{AK:"5-6,9-10x"},
+"rusty-blackbird":{AK:"4-9b",MA:"9-5m",NY:"9-5m",PA:"9-5m"},
+"sabines-gull":{AK:"5-9b",PA:"8-11x"},
+"saltmarsh-sparrow":{MA:"5-10b",NY:"4-10b",PA:"5,9-10x"},
+"sanderling":{AK:"5-9m",MA:"1-12w",PA:"5,8-10x"},
+"sandhill-crane":{AK:"4-9b",PA:"3-12b"},
+"savannah-sparrow":{AK:"5-9b",MA:"3-12b",PA:"3-11b"},
+"says-phoebe":{AK:"4-9b",PA:"3-4,10-12x"},
+"scarlet-tanager":{MA:"5-9b",NY:"5-9b",PA:"4-10b",TX:"4-5,9-10m"},
+"scissor-tailed-flycatcher":{TX:"3-11b",PA:"4-6,9-11x"},
+"seaside-sparrow":{MA:"5-9b",NY:"3-11b",PA:"5,9-10x",TX:"1-12r",FL:"1-12r"},
+"sedge-wren":{PA:"5-10b"},
+"semipalmated-plover":{AK:"5-9b",MA:"4-11m",PA:"4-5,7-10m"},
+"semipalmated-sandpiper":{AK:"5-9b",MA:"5-10m",NY:"5-10m",PA:"5-10m",TX:"3-5,7-10m"},
+"sharp-shinned-hawk":{AK:"4-10b",MA:"1-12r",PA:"1-12r"},
+"sharp-tailed-grouse":{AK:"1-12r"},
+"sharp-tailed-sandpiper":{AK:"8-10m"},
+"short-billed-dowitcher":{AK:"5-8b",WA:"4-5,7-10m",CA:"7-5w",TX:"7-5w",FL:"7-5w",NY:"4-5,7-10m",PA:"5,7-9x",MA:"4-10m"},
+"short-billed-gull":{AK:"1-12r"},
+"short-eared-owl":{AK:"4-10b",MA:"10-4w",PA:"10-4w"},
+"short-tailed-albatross":{AK:"4-10x"},
+"short-tailed-shearwater":{AK:"5-11m"},
+"siberian-accentor":{AK:"5,9-11x"},
+"siberian-rubythroat":{AK:"5-6,9-10x"},
+"siberian-stonechat":{AK:"5-6,9-10x"},
+"slaty-backed-gull":{AK:"9-6w",PA:"12-3x"},
+"smew":{AK:"4-6,10-11x"},
+"smiths-longspur":{AK:"5-9b"},
+"snow-bunting":{AK:"1-12r",MA:"10-4w",PA:"11-3w"},
+"snow-goose":{AK:"5-9b",WA:"10-4w",NY:"10-4w",PA:"10-4w",CA:"10-4w",TX:"10-4w",MA:"10-4w"},
+"snowy-egret":{MA:"4-10b",NY:"4-10b",PA:"4-10b",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"snowy-owl":{AK:"1-12r",PA:"10-4w"},
+"solitary-sandpiper":{AK:"5-8b",WA:"4-5,7-10m",MA:"4-5,7-10m",NY:"4-10m",PA:"4-5,7-10m",TX:"3-5,7-10m"},
+"song-sparrow":{AK:"1-12r",WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r"},
+"sooty-grouse":{AK:"1-12r"},
+"sooty-shearwater":{AK:"5-10m",WA:"5-11m",MA:"5-10m"},
+"sora":{PA:"4-10b"},
+"south-polar-skua":{AK:"5-10m",PA:"8-10x"},
+"spectacled-eider":{AK:"4-9b"},
+"spotted-redshank":{AK:"5-9x"},
+"spotted-sandpiper":{AK:"5-9b",WA:"4-10b",MA:"4-10b",PA:"4-10b"},
+"spotted-towhee":{WA:"1-12r",CA:"1-12r",PA:"10-4x"},
+"spruce-grouse":{AK:"1-12r"},
+"stellers-eider":{AK:"1-12r"},
+"stellers-jay":{AK:"1-12r",WA:"1-12r",CA:"1-12r"},
+"stellers-sea-eagle":{AK:"10-5x"},
+"stilt-sandpiper":{AK:"5-8b",MA:"5,7-10m",PA:"5,7-10m"},
+"summer-tanager":{PA:"4-9b"},
+"surf-scoter":{AK:"1-12r",WA:"9-6w",MA:"9-5w",PA:"10-5m"},
+"surfbird":{AK:"5-10b",WA:"7-5w",CA:"7-5w",PA:"5,7-9x"},
+"swainsons-hawk":{PA:"4-5,9-11x"},
+"swainsons-thrush":{AK:"5-9b",MA:"5-10b",PA:"4-10m"},
+"swallow-tailed-kite":{PA:"4-8x"},
+"swamp-sparrow":{MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"taiga-bean-goose":{AK:"4-6,9-10x"},
+"taiga-flycatcher":{AK:"5-6,8-9x"},
+"temmincks-stint":{AK:"5-8x"},
+"tennessee-warbler":{PA:"4-5,8-10m"},
+"terek-sandpiper":{AK:"5-8x"},
+"thick-billed-murre":{AK:"1-12r",PA:"11-2x"},
+"townsends-solitaire":{AK:"4-10b",WA:"1-12r",CA:"1-12r",PA:"10-4x"},
+"townsends-warbler":{AK:"5-9b",WA:"4-10b",PA:"9-1x"},
+"tree-swallow":{AK:"4-9b",MA:"3-11b",PA:"3-10b"},
+"tricolored-heron":{PA:"4-9x"},
+"trumpeter-swan":{AK:"1-12r",WA:"10-4w",PA:"11-3x"},
+"tufted-duck":{AK:"10-5w",PA:"11-4x"},
+"tufted-puffin":{AK:"4-9b",WA:"5-9b"},
+"tufted-titmouse":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r"},
+"tundra-bean-goose":{AK:"4-6,9-10x",PA:"11-2x"},
+"tundra-swan":{AK:"5-10b",PA:"10-4w"},
+"turkey-vulture":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"upland-sandpiper":{PA:"4-8b"},
+"varied-thrush":{AK:"3-10b",WA:"1-12r",PA:"11-4x"},
+"veery":{MA:"4-9b",NY:"4-9b",PA:"4-9b"},
+"vega-gull":{AK:"4-11m",PA:"11-3x"},
+"vesper-sparrow":{PA:"4-10b"},
+"violet-green-swallow":{AK:"5-9b",WA:"3-9b",PA:"4-5,9-10x"},
+"virginia-rail":{PA:"3-11b"},
+"wandering-tattler":{AK:"5-9b"},
+"warbling-vireo":{MA:"4-9b",NY:"4-9b",PA:"4-9b",CA:"3-9b",TX:"4-10b"},
+"western-cattle-egret":{PA:"4-11x"},
+"western-kingbird":{PA:"5,8-11x"},
+"western-meadowlark":{WA:"1-12r",CA:"1-12r",TX:"1-12r",PA:"10-4x"},
+"western-sandpiper":{AK:"5-9b",PA:"5,7-10x"},
+"western-screech-owl":{AK:"1-12r",WA:"1-12r",CA:"1-12r",TX:"1-12r"},
+"western-tanager":{AK:"5-9x",PA:"5,9-12x"},
+"western-wood-pewee":{AK:"5-8x",WA:"5-9b",CA:"4-9b",TX:"4-10b"},
+"whimbrel":{AK:"5-9b",MA:"5,7-10m"},
+"whiskered-auklet":{AK:"1-12r"},
+"white-breasted-nuthatch":{WA:"1-12r",MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r"},
+"white-crowned-sparrow":{AK:"4-9b",MA:"9-5w",PA:"9-5w"},
+"white-eyed-vireo":{MA:"4-10b",NY:"4-10b",PA:"4-9b",TX:"1-12r",FL:"1-12r"},
+"white-faced-ibis":{PA:"4-10x"},
+"white-ibis":{PA:"6-10x"},
+"white-rumped-sandpiper":{AK:"6-8b",MA:"5-11m",PA:"5-6,8-11m"},
+"white-tailed-ptarmigan":{AK:"1-12r",WA:"1-12r"},
+"white-throated-sparrow":{MA:"9-5w",NY:"1-12r",PA:"9-5w"},
+"white-wagtail":{AK:"5-9b"},
+"white-winged-crossbill":{AK:"1-12r",PA:"10-4x"},
+"white-winged-dove":{PA:"4-11x"},
+"white-winged-scoter":{AK:"1-12r",MA:"10-5w",PA:"10-5m"},
+"white-winged-tern":{AK:"5-8x",PA:"5-8x"},
+"whooper-swan":{AK:"10-5w",PA:"11-3x"},
+"wild-turkey":{MA:"1-12r",NY:"1-12r",PA:"1-12r",TX:"1-12r"},
+"willet":{MA:"4-9b",NY:"4-9b",PA:"4-5,7-9x",TX:"1-12r",FL:"1-12r"},
+"willow-flycatcher":{MA:"5-9b",NY:"5-9b",PA:"5-9b",CA:"5-9b",TX:"4-5,8-10m"},
+"willow-ptarmigan":{AK:"1-12r",PA:"11-3x"},
+"willow-warbler":{AK:"6,8-9x"},
+"wilsons-phalarope":{PA:"4-5,7-9m"},
+"wilsons-snipe":{AK:"4-9b",MA:"1-12r",PA:"1-12r"},
+"wilsons-warbler":{AK:"5-9b",PA:"4-5,8-10m"},
+"winter-wren":{PA:"1-12r"},
+"wood-duck":{MA:"1-12r",NY:"1-12r",PA:"1-12r",CA:"1-12r",TX:"1-12r",FL:"1-12r"},
+"wood-sandpiper":{AK:"5-8x"},
+"wood-thrush":{MA:"4-9b",NY:"4-9b",PA:"4-9b",TX:"3-5,8-10m",FL:"3-5,8-10m"},
+"worm-eating-warbler":{PA:"4-9b"},
+"yellow-bellied-flycatcher":{PA:"5-6,8-10m"},
+"yellow-bellied-sapsucker":{MA:"1-12r",NY:"1-12r",PA:"1-12r"},
+"yellow-billed-cuckoo":{PA:"5-10b"},
+"yellow-billed-loon":{AK:"5-10b",PA:"11-3x"},
+"yellow-breasted-bunting":{AK:"6,8-9x"},
+"yellow-breasted-chat":{PA:"5-9b"},
+"yellow-browed-bunting":{AK:"5-6,9-10x"},
+"yellow-browed-warbler":{AK:"5-6,9-10x"},
+"yellow-crowned-night-heron":{PA:"4-10b"},
+"yellow-headed-blackbird":{PA:"4-6,9-11x"},
+"yellow-rumped-warbler":{AK:"5-9b",MA:"1-12r",PA:"1-12r"},
+"yellow-throated-vireo":{PA:"4-9b"},
+"yellow-throated-warbler":{PA:"4-9b"},
+"yellow-warbler":{AK:"5-9b",MA:"4-9b"}
+};
+/* ============================================================
+   SEASONALITY — per-region month windows
+   SEASON_DATA[birdId][REGION] = "<months><status>":
+     "5-8b"      May-Aug, summer breeder
+     "9-4w"      Sep-Apr (wraps the year end), winter visitor
+     "4-5,8-10m" split spring + fall passage
+   Status letter: r resident · b breeding · w winter · m migrant · x rare.
+   A bird with NO entry for a region is ALWAYS shown (fail open) — never hide
+   a bird just because its timing is unknown. Windows are deliberately
+   generous at the edges for the same reason.
+   ============================================================ */
+const SEASON_STATUS={r:"Year-round",b:"Summer",w:"Winter",m:"Migration",x:"Rare"};
+const SEASON_STATUS_LONG={r:"Present year-round",b:"Breeds here in summer",w:"Spends the winter here",m:"Passes through on migration",x:"Rare or irregular visitor"};
+const MONTH_ABB=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const LIST_SEASONS=["Spring","Summer","Fall","Winter"];
+const SEASON_MONTHS={Spring:[3,4,5],Summer:[6,7,8],Fall:[9,10,11],Winter:[12,1,2]};
+function curMonth(){return new Date().getMonth()+1;}
+function curSeason(){const m=curMonth();return (m===12||m<=2)?"Winter":m<=5?"Spring":m<=8?"Summer":"Fall";}
+/* Subregions (AK-NOME) inherit their parent state's timing. */
+function seasonEntry(id,code){
+  const rec=SEASON_DATA[id];if(!rec||!code)return null;
+  return rec[code]||rec[SUBREGION_OF[code]]||null;
+}
+const _seasonSets={};
+function seasonMonthSet(entry){
+  if(_seasonSets[entry])return _seasonSets[entry];
+  const set=new Set(),body=String(entry).replace(/[a-z]$/,"");
+  body.split(",").forEach(part=>{
+    const bits=part.split("-").map(n=>parseInt(n,10));
+    if(bits.length===1){if(bits[0]>=1&&bits[0]<=12)set.add(bits[0]);return;}
+    let m=bits[0];
+    for(let i=0;i<12;i++){set.add(m);if(m===bits[1])break;m=m%12+1;}
+  });
+  return _seasonSets[entry]=set;
+}
+function seasonStatus(id,code){const e=seasonEntry(id,code);return e?e.slice(-1):null;}
+function birdMonths(id,code){const e=seasonEntry(id,code);return e?seasonMonthSet(e):null;}
+/* filter: "" any · "now" this month · Spring|Summer|Fall|Winter */
+function birdMatchesSeason(id,code,filter){
+  if(!filter)return true;
+  if(!code){ // no region context (custom list): in season anywhere it occurs
+    const regs=(BIRDS[id]&&BIRDS[id].reg)||[];
+    return regs.length?regs.some(rc=>birdMatchesSeason(id,rc,filter)):true;
+  }
+  const set=birdMonths(id,code);
+  if(!set)return true;                       // unknown timing -> always show
+  if(filter==="now")return set.has(curMonth());
+  return (SEASON_MONTHS[filter]||[]).some(m=>set.has(m));
+}
+/* The season filter is a PERSISTED preference so "only show what's around
+   now" stays on across tabs and launches. */
+function seasonFilter(){const f=state.prefs&&state.prefs.seasonFilter;return (f==="now"||SEASON_MONTHS[f])?f:"";}
+function setSeasonFilter(v){if(!state.prefs)state.prefs={};state.prefs.seasonFilter=(v==="now"||SEASON_MONTHS[v])?v:"";save();}
+function seasonSelectHTML(domId){
+  const cur=seasonFilter();
+  return `<select id="${domId}">
+    <option value="" ${cur===""?"selected":""}>Any time of year</option>
+    <option value="now" ${cur==="now"?"selected":""}>🗓 In season now (${MONTH_ABB[curMonth()-1]})</option>
+    ${LIST_SEASONS.map(s=>`<option value="${s}" ${cur===s?"selected":""}>${s}</option>`).join("")}
+  </select>`;
+}
+function seasonRangeLabel(entry){
+  const body=String(entry).replace(/[a-z]$/,"");
+  return body.split(",").map(p=>{
+    const b=p.split("-").map(n=>parseInt(n,10));
+    return b.length===1?MONTH_ABB[b[0]-1]:MONTH_ABB[b[0]-1]+"–"+MONTH_ABB[b[1]-1];
+  }).join(", ");
+}
+/* Compact pill for bird cards, e.g. "Summer · May–Aug". */
+function seasonPillHTML(id,code){
+  const e=seasonEntry(id,code);if(!e)return "";
+  const st=e.slice(-1);
+  if(st==="r")return `<span class="pill season-pill s-r">Year-round</span>`;
+  return `<span class="pill season-pill s-${st}">${SEASON_STATUS[st]||""} · ${seasonRangeLabel(e)}</span>`;
+}
+/* 12-month presence strip; the current month is outlined. */
+function seasonStripHTML(id,code){
+  const set=birdMonths(id,code);if(!set)return "";
+  const now=curMonth();
+  return `<div class="season-strip">`+MONTH_ABB.map((mn,i)=>
+    `<span class="ms${set.has(i+1)?" on":""}${i+1===now?" now":""}" title="${mn}">${mn[0]}</span>`).join("")+`</div>`;
+}
+/* Detail-view section: one row per region this bird occurs in. */
+function seasonSectionHTML(id,b){
+  const regs=(b.reg||[]).filter(rc=>seasonEntry(id,rc));
+  if(!regs.length)return `<div class="season-tags">${(b.sea||[]).map(s=>`<span class="season">${esc(s)}</span>`).join("")}</div>`;
+  const loaded=new Set(state.loadedRegions||[]);
+  regs.sort((a,c)=>(loaded.has(c)?1:0)-(loaded.has(a)?1:0)||a.localeCompare(c));
+  const now=curMonth();
+  return `<div class="season-rows">`+regs.map(rc=>{
+    const st=seasonStatus(id,rc),set=birdMonths(id,rc),here=set.has(now);
+    return `<div class="season-row${here?" active":""}">
+      <div class="sr-head"><span class="sr-reg">${regionIcon(rc)} ${esc(regionName(rc))}</span>
+      <span class="pill season-pill s-${st}">${SEASON_STATUS[st]||""}</span></div>
+      ${seasonStripHTML(id,rc)}
+      <div class="sr-now${here?"":" off"}">${here?"✓ Possible right now":"Not expected in "+MONTH_ABB[now-1]} · ${esc(SEASON_STATUS_LONG[st]||"")}</div>
+    </div>`;
+  }).join("")+`</div>`;
+}
+
 views.lists=function(root){
   const opts=listOptions();
 
@@ -2585,7 +3224,7 @@ views.lists=function(root){
     <button class="btn ghost sm" id="importCsv">⤒ Import CSV</button>
     <button class="btn ghost sm" id="newCustom">★ New custom list</button>
   </div>`);
-  tb.querySelector("#listSel").onchange=e=>{listState.region=e.target.value;listState.sub=null;listState.q="";listState.fSize="";listState.fColor="";listState.fSeason="";render();};
+  tb.querySelector("#listSel").onchange=e=>{listState.region=e.target.value;listState.sub=null;listState.q="";listState.fSize="";listState.fColor="";render();};
   tb.querySelector("#dlRegion").onclick=downloadRegionDialog;
   tb.querySelector("#importCsv").onclick=()=>document.getElementById("csvPicker").click();
   tb.querySelector("#newCustom").onclick=newCustomListDialog;
@@ -2626,7 +3265,7 @@ views.lists=function(root){
     <div class="fg"><label class="fld">Colour</label>
       <select id="fColor"><option value="">Any colour</option>${COLOR_OPTIONS.map(c=>`<option value="${c}" ${listState.fColor===c?"selected":""}>${c}</option>`).join("")}</select></div>
     <div class="fg"><label class="fld">Season</label>
-      <select id="fSeason"><option value="">Any season</option>${LIST_SEASONS.map(s=>`<option value="${s}" ${listState.fSeason===s?"selected":""}>${s}</option>`).join("")}</select></div>
+      ${seasonSelectHTML("fSeason")}</div>
     <div class="spacer"></div>
     <span class="count-badge" id="lcount"></span>
   </div>`);
@@ -2643,9 +3282,10 @@ views.lists=function(root){
 
   const q=listState.q.trim().toLowerCase();
   const seen=seenBirdIds();
+  const seasonCode=isCustom?null:(listState.sub||key);
   const filtered=birdIds.filter(id=>{
     const b=BIRDS[id];
-    if(!listBirdMatchesFilters(b))return false;
+    if(!listBirdMatchesFilters(id,b,seasonCode))return false;
     return !q||b.name.toLowerCase().includes(q)||b.sci.toLowerCase().includes(q)||b.fam.toLowerCase().includes(q);
   });
   fb.querySelector("#lcount").textContent=`${filtered.length} of ${birdIds.length} species`;
@@ -2656,12 +3296,12 @@ views.lists=function(root){
     root.appendChild(emptyState("🔍","No matches","No birds match your search and filters.",null));
   }else{
     const grid=el(`<div class="grid birds${densityClass()}"></div>`);
-    filtered.forEach(id=>grid.appendChild(listCard(id,seen.has(id))));
+    filtered.forEach(id=>grid.appendChild(listCard(id,seen.has(id),seasonCode)));
     root.appendChild(grid);
   }
   fb.querySelector("#fSize").onchange=e=>{listState.fSize=e.target.value;render();};
   fb.querySelector("#fColor").onchange=e=>{listState.fColor=e.target.value;render();};
-  fb.querySelector("#fSeason").onchange=e=>{listState.fSeason=e.target.value;render();};
+  fb.querySelector("#fSeason").onchange=e=>{setSeasonFilter(e.target.value);render();};
   fb.querySelector("#lq").oninput=e=>{
     listState.q=e.target.value;
     render();
@@ -2669,7 +3309,7 @@ views.lists=function(root){
   };
 };
 
-function listCard(id,isSeen){
+function listCard(id,isSeen,code){
   const b=BIRDS[id];
   const card=el(`<div class="card">
     <div class="thumb-wrap" data-birdimg="${id}">${birdImageHTML(id)}</div>
@@ -2678,6 +3318,7 @@ function listCard(id,isSeen){
       ${dispSubHTML(b)}
       <div class="meta">
         <span class="pill rarity-${rsl(b.r)}">${b.r}</span>
+        ${seasonPillHTML(id,code)}
         ${isSeen?'<span class="pill" style="background:rgba(47,74,60,.13);color:var(--forest)">✓ Seen</span>':""}
       </div>
     </div>
@@ -2730,7 +3371,7 @@ function openBirdDetail(id){
       <div id="audioBox" class="audio-embed" style="display:none"></div>
     </div>
     <div class="detail-section"><h4>When to find it</h4>
-      <div class="season-tags">${b.sea.map(s=>`<span class="season">${esc(s)}</span>`).join("")}</div>
+      ${seasonSectionHTML(id,b)}
     </div>
     <div class="detail-section" id="sightingsSec"></div>
     ${wc&&wc.page?`<div class="detail-section"><p class="tiny">Photo &amp; more via <a target="_blank" rel="noopener" href="${esc(wc.page)}">Wikipedia</a>.</p></div>`:""}
@@ -3399,7 +4040,8 @@ views.targets=function(root){
   const seen=seenBirdIds();
   const all=regionBirds(code);
   const q=targetState.q.trim().toLowerCase();
-  let targets=all.filter(id=>!seen.has(id)&&BIRDS[id]);
+  const sf=seasonFilter();
+  let targets=all.filter(id=>!seen.has(id)&&BIRDS[id]&&birdMatchesSeason(id,code,sf));
   // easiest-first: common birds are the most attainable targets
   targets.sort((a,b)=>(RARITY_ORDER[BIRDS[a].r]??9)-(RARITY_ORDER[BIRDS[b].r]??9)||BIRDS[a].name.localeCompare(BIRDS[b].name));
   if(q)targets=targets.filter(id=>{const b=BIRDS[id];return b.name.toLowerCase().includes(q)||b.sci.toLowerCase().includes(q)||b.fam.toLowerCase().includes(q);});
@@ -3409,13 +4051,16 @@ views.targets=function(root){
     <div class="spacer"></div>
     <div><label class="fld">Region</label>
       <select id="tRegion">${loaded.map(c=>`<option value="${c}" ${code===c?"selected":""}>${regionIcon(c)} ${esc(regionName(c))}</option>`).join("")}</select></div>
+    <div><label class="fld">Season</label>${seasonSelectHTML("tSeason")}</div>
   </div>`);
   tb.querySelector("#tRegion").onchange=e=>{targetState.region=e.target.value;targetState.q="";render();};
+  tb.querySelector("#tSeason").onchange=e=>{setSeasonFilter(e.target.value);render();};
   tb.appendChild(gridToggleBtn());
   root.appendChild(tb);
 
   const total=all.length,got=all.length-all.filter(id=>!seen.has(id)).length;
-  root.appendChild(el(`<div class="target-tip">🎯 <b>${all.filter(id=>!seen.has(id)).length}</b> still to find in ${esc(regionName(code))} · ${got}/${total} logged (${total?Math.round(got/total*100):0}%). Sorted easiest-first by how common each species is. Tap “✓ Got it” to log one instantly.</div>`));
+  const outstanding=all.filter(id=>!seen.has(id)).length;
+  root.appendChild(el(`<div class="target-tip">🎯 <b>${outstanding}</b> still to find in ${esc(regionName(code))} · ${got}/${total} logged (${total?Math.round(got/total*100):0}%). Sorted easiest-first by how common each species is. Tap “✓ Got it” to log one instantly.${sf?`<div class="season-note">Showing the <b>${sf==="now"?"in season now ("+MONTH_ABB[curMonth()-1]+")":esc(sf)}</b> subset — ${targets.length} of ${outstanding} are findable then.</div>`:""}</div>`));
 
   const sb=el(`<div class="filter-bar stick"><div class="fg" style="flex:1">
     <div class="search-wrap" style="max-width:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5a4a37" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
@@ -3439,7 +4084,7 @@ function targetCard(id,code){
     <div class="body">
       <div class="name">${esc(dispName(b))}</div>
       ${dispSubHTML(b)}
-      <div class="meta"><span class="pill rarity-${rsl(b.r)}">${b.r}</span></div>
+      <div class="meta"><span class="pill rarity-${rsl(b.r)}">${b.r}</span>${seasonPillHTML(id,code)}</div>
       <div class="meta" style="margin-top:8px"><button class="btn sm" data-got>✓ Got it</button></div>
     </div>
   </div>`);
@@ -4663,6 +5308,10 @@ function openSettings(){
       </div>
     </div>
     <div class="set-row col">
+      <div class="set-label"><div class="set-title">Season filter</div><div class="set-desc">Hide birds that aren't around at this time of year. “In season now” uses the current month against each species' timing <em>in the region you're viewing</em>, so a duck can be a summer bird in Alaska and a winter bird in Texas. Applies to Lists and Targets; species with no timing data are always shown.</div></div>
+      ${seasonSelectHTML("setSeason")}
+    </div>
+    <div class="set-row col">
       <div class="set-label"><div class="set-title">eBird API key</div><div class="set-desc">Powers 🔭 Nearby sightings on the Field Map. Get a free key at <a href="https://ebird.org/api/keygen" target="_blank" rel="noopener">ebird.org/api/keygen</a> — it's stored only on this device.</div></div>
       <div style="display:flex;gap:8px;width:100%">
         <input type="text" id="setEbird" placeholder="No key saved" value="${esc(ebirdKey())}" autocomplete="off" style="flex:1;min-width:0">
@@ -4675,6 +5324,7 @@ function openSettings(){
     </div>
   </div>`);
   openModal({title:"Settings",body,onMount:ov=>{
+    ov.querySelector("#setSeason").onchange=e=>{setSeasonFilter(e.target.value);render();};
     ov.querySelector("#setDark").onchange=e=>{
       state.prefs.theme=e.target.checked?"dark":"light";
       save();applyTheme();
