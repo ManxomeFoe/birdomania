@@ -26,10 +26,10 @@ header.app{
   font:13.5px/1.45 var(--sans,"Avenir Next","Segoe UI",Helvetica,Arial,sans-serif);
   box-shadow:0 -2px 10px rgba(0,0,0,.25);
 }
-#offline-backup-banner b{font-weight:700}
+#offline-backup-banner b{font-weight:600}
 #offline-backup-banner button{
   position:absolute;top:6px;right:8px;width:30px;height:30px;
-  background:transparent;border:none;color:#fff7ec;font-size:16px;line-height:1;
+  background:transparent;border:none;color:#fff7ec;font-size:var(--fs-md);line-height:1;
 }
 
 /* ---- Install prompt (web only; the APK is already an installed app) ----
@@ -46,12 +46,12 @@ header.app{
   background:var(--paper-2,#efe5cd);
   color:var(--ink,#2b2117);
   border:1px solid var(--line,#cdbf9e);
-  border-radius:14px;
+  border-radius:var(--r-lg);
   box-shadow:0 6px 22px rgba(0,0,0,.22);
   font:14px/1.45 var(--sans,"Avenir Next","Segoe UI",Helvetica,Arial,sans-serif);
 }
-#install-banner b{display:block;font-weight:700;margin-bottom:4px;color:var(--forest,#2f4a3c)}
-#install-banner span{display:block;color:var(--ink-soft,#5a4a37);font-size:13px}
+#install-banner b{display:block;font-weight:600;margin-bottom:4px;color:var(--forest,#2f4a3c)}
+#install-banner span{display:block;color:var(--ink-soft,#5a4a37);font-size:var(--fs-sm)}
 #install-banner .ib-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
 #install-banner .ib-go{background:var(--forest,#2f4a3c);color:#f4ecd8;border-color:var(--forest,#2f4a3c)}
 /* The app's .btn is already a solid forest button, so the dismiss action has to
@@ -106,7 +106,7 @@ html,body{
     gap:10px !important;
   }
   .brand-mark{ width:30px !important; height:30px !important; }
-  .brand-text h1{ font-size:22px !important; letter-spacing:.2px !important; }
+  .brand-text h1{ font-size:var(--fs-lg) !important; letter-spacing:.2px !important; }
   header.app .hdr-icon{ width:38px; height:38px; padding:0; justify-content:center; }
 
   /* ---- bottom tab bar ---- */
@@ -128,12 +128,12 @@ html,body{
     flex:1 1 0; min-width:0;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
     background:none; border:0; padding:0; margin:0; cursor:pointer;
-    color:var(--ink-soft); font-family:var(--sans); font-size:11px; font-weight:600; letter-spacing:.02em;
+    color:var(--ink-soft); font-family:var(--sans); font-size:var(--fs-micro); font-weight:600; letter-spacing:.02em;
     -webkit-tap-highlight-color:transparent;
   }
   #bottom-nav .bn-ico{
     position:relative; display:flex; align-items:center; justify-content:center;
-    width:54px; height:30px; border-radius:15px;
+    width:54px; height:30px; border-radius:var(--r-pill);
   }
   #bottom-nav .bn-ico::before{
     content:""; position:absolute; inset:0; border-radius:inherit;
@@ -155,7 +155,7 @@ html,body{
     display:block; position:fixed; z-index:98;
     left:calc(10px + var(--android-inset-left)); right:calc(10px + var(--android-inset-right));
     bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 8px);
-    padding:10px; border-radius:18px;
+    padding:10px; border-radius:var(--r-lg);
     background:var(--paper); border:1px solid var(--line);
     box-shadow:0 12px 36px rgba(20,15,8,.22);
     animation:rise .18s ease;
@@ -163,8 +163,8 @@ html,body{
   .more-sheet .ms-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
   .more-sheet .ms-grid button{
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px;
-    min-height:78px; padding:10px 4px; border:0; border-radius:12px; background:none; cursor:pointer;
-    color:var(--ink); font-family:var(--sans); font-size:12.5px; font-weight:600; text-align:center;
+    min-height:78px; padding:10px 4px; border:0; border-radius:var(--r-sm); background:none; cursor:pointer;
+    color:var(--ink); font-family:var(--sans); font-size:var(--fs-xs); font-weight:600; text-align:center;
   }
   .more-sheet .ms-grid button svg{ color:var(--forest); }
   .more-sheet .ms-grid button:active{ background:var(--paper-2); }
@@ -175,8 +175,8 @@ html,body{
   }
   .more-sheet .ms-data button{
     display:flex; align-items:center; justify-content:center; gap:8px;
-    padding:11px 8px; border-radius:11px; border:1px solid var(--line); background:none; cursor:pointer;
-    color:var(--ink-soft); font-family:var(--sans); font-size:13px; font-weight:600;
+    padding:11px 8px; border-radius:var(--r-sm); border:1px solid var(--line); background:none; cursor:pointer;
+    color:var(--ink-soft); font-family:var(--sans); font-size:var(--fs-sm); font-weight:600;
   }
   .more-sheet .ms-data svg{ width:18px; height:18px; }
 
@@ -189,7 +189,7 @@ html,body{
 
 /* ---- Offline-images settings section ---- */
 .offline-row .offline-status{
-  font-size:13px;color:var(--ink-soft);margin-top:8px;
+  font-size:var(--fs-sm);color:var(--ink-soft);margin-top:8px;
 }
 .offline-row .offline-bar{
   height:6px;border-radius:4px;background:var(--line);
@@ -208,17 +208,17 @@ html,body{
 }
 .offline-row .offline-region{
   display:flex;align-items:center;gap:12px;
-  padding:9px 12px;border:1px solid var(--line);border-radius:8px;
-  background:#fffdf6;
+  padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--surface);
 }
 .offline-row .offline-region-info{
   flex:1;min-width:0;
 }
 .offline-row .offline-region-name{
-  font-weight:600;font-size:14px;color:var(--ink);
+  font-weight:600;font-size:var(--fs-base);color:var(--ink);
 }
 .offline-row .offline-region-count{
-  font-size:12px;color:var(--ink-soft);margin-top:2px;
+  font-size:var(--fs-xs);color:var(--ink-soft);margin-top:2px;
 }
 .offline-row .offline-region-dl{
   flex:0 0 auto;
@@ -226,7 +226,7 @@ html,body{
 
 /* ---- App-updates settings section (same look as the offline section) ---- */
 .update-row .update-status{
-  font-size:13px;color:var(--ink-soft);margin-top:8px;
+  font-size:var(--fs-sm);color:var(--ink-soft);margin-top:8px;
 }
 .update-row .update-bar{
   height:6px;border-radius:4px;background:var(--line);
@@ -246,23 +246,23 @@ html,body{
 }
 .backup-row .backup-item{
   display:flex;align-items:center;gap:12px;
-  padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+  padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-sm);
   background:var(--paper-2,#fffdf6);
 }
 .backup-row .backup-info{
   flex:1;min-width:0;
 }
 .backup-row .backup-date{
-  font-weight:600;font-size:14px;color:var(--ink);
+  font-weight:600;font-size:var(--fs-base);color:var(--ink);
 }
 .backup-row .backup-size{
-  font-size:12px;color:var(--ink-soft);margin-top:2px;
+  font-size:var(--fs-xs);color:var(--ink-soft);margin-top:2px;
 }
 .backup-row .backup-item .btn{
   flex:0 0 auto;
 }
 .backup-row .backup-empty{
-  font-size:13px;color:var(--ink-soft);margin-top:8px;
+  font-size:var(--fs-sm);color:var(--ink-soft);margin-top:8px;
 }
 
 /* ============================================================
