@@ -1258,6 +1258,141 @@
     setTimeout(showInstallBanner, 12000);
   }
 
+  /* ---- 10. Phone navigation: bottom tab bar + "More" sheet ----
+     On phone widths the page's 10-tab nav wraps to three rows inside a
+     sticky header (~260px, a third of the screen). Below 720px the CSS hides
+     that nav and the Export/Import buttons and slims the header; this adds a
+     bottom bar with the primary tabs, plus a "More" sheet for the rest and
+     for Export/Import. Every bar/sheet tap CLICKS the page's own (hidden)
+     #tabs button or header button, so all of the page's switching logic still
+     runs; active state is mirrored from #tabs via a MutationObserver. Desktop
+     widths never see any of this (CSS-gated). */
+  (function installPhoneNav(){
+    var tabsNav = document.getElementById('tabs');
+    if (!tabsNav || document.getElementById('bottom-nav')) return;
+    // Swap these two lists to change what lives on the bar vs. in More.
+    var PRIMARY = ['home', 'seen', 'lists', 'map'];
+    var MORE    = ['targets', 'log', 'stats', 'quiz', 'portfolio', 'friends'];
+    var LABEL = { home:'Home', seen:'Seen', lists:'Lists', map:'Map', more:'More',
+                  targets:'Targets', log:"Traveller's Log", stats:'Stats', quiz:'Quiz',
+                  portfolio:'Portfolio', friends:'Friends' };
+    var P = {
+      home:'<path d="M3.5 10.5 12 3.8l8.5 6.7"/><path d="M5.8 9.2V20h4.6v-5.6h3.2V20h4.6V9.2"/>',
+      seen:'<circle cx="6.7" cy="15.6" r="3.6"/><circle cx="17.3" cy="15.6" r="3.6"/><path d="M10.3 15.2h3.4"/><path d="M3.6 13.6 5.9 5.5h2.6l1.2 5.6"/><path d="M20.4 13.6l-2.3-8.1h-2.6l-1.2 5.6"/>',
+      lists:'<path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="4.6" cy="6.5" r=".9" fill="currentColor"/><circle cx="4.6" cy="12" r=".9" fill="currentColor"/><circle cx="4.6" cy="17.5" r=".9" fill="currentColor"/>',
+      map:'<path d="M9 4.5 3.5 6.6v13l5.5-2.1 6 2.1 5.5-2.1v-13L15 6.6l-6-2.1z"/><path d="M9 4.5v13M15 6.6v13"/>',
+      more:'<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>',
+      targets:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".9" fill="currentColor"/>',
+      log:'<path d="M6 3.5h11a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6z"/><path d="M6 3.5v17"/><path d="M10 8.5h5.5M10 12.5h5.5"/>',
+      stats:'<path d="M6 19.5v-8M12 19.5V5M18 19.5v-5.5"/><path d="M3.5 19.5h17"/>',
+      quiz:'<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.6a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.2.9-1.2 1.7v.6"/><circle cx="12" cy="16.9" r=".9" fill="currentColor"/>',
+      portfolio:'<rect x="3.5" y="5" width="17" height="14" rx="2.2"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 15.5-4.8-4.6L7 19"/>',
+      friends:'<circle cx="9" cy="9" r="3.2"/><path d="M3.5 19.5c0-3.2 2.5-5.3 5.5-5.3s5.5 2.1 5.5 5.3"/><circle cx="16.8" cy="8.3" r="2.5"/><path d="M15.6 13.9c2.8.2 4.9 2 4.9 4.9"/>',
+      export:'<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
+      import:'<path d="M12 15.5v-11M7.5 9 12 4.5 16.5 9"/><path d="M5 19.5h14"/>'
+    };
+    function icon(k){
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" ' +
+             'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[k] + '</svg>';
+    }
+    function curTab(){ try { return currentTab; } catch (e) { return 'home'; } }
+    function go(tab){
+      var b = tabsNav.querySelector('button[data-tab="' + tab + '"]');
+      if (b) b.click();
+      try { window.scrollTo(0, 0); } catch (e) {}
+    }
+
+    var bar = document.createElement('nav');
+    bar.id = 'bottom-nav';
+    bar.setAttribute('aria-label', 'Sections');
+    bar.innerHTML = PRIMARY.concat(['more']).map(function(k){
+      return '<button type="button" data-go="' + k + '"><span class="bn-ico">' + icon(k) +
+             '</span><span class="bn-lbl">' + LABEL[k] + '</span></button>';
+    }).join('');
+    document.body.appendChild(bar);
+    document.body.classList.add('has-bottom-nav');
+
+    // ---- "More" sheet (a history entry while open, so Android Back closes
+    // it instead of leaving the app) ----
+    var sheet = null, scrim = null, sheetHist = false;
+    function closeSheet(fromPop){
+      if (!sheet) return;
+      sheet.remove(); scrim.remove(); sheet = scrim = null;
+      bar.querySelector('[data-go="more"]').classList.remove('open');
+      if (sheetHist && !fromPop) { sheetHist = false; try { history.back(); } catch (e) {} }
+      sheetHist = false;
+      sync();
+    }
+    function openSheet(){
+      if (sheet) { closeSheet(); return; }
+      scrim = document.createElement('div');
+      scrim.className = 'more-scrim';
+      scrim.onclick = function(){ closeSheet(); };
+      sheet = document.createElement('div');
+      sheet.className = 'more-sheet';
+      sheet.setAttribute('role', 'dialog');
+      sheet.setAttribute('aria-label', 'More sections');
+      var cur = curTab();
+      sheet.innerHTML =
+        '<div class="ms-grid">' + MORE.map(function(k){
+          return '<button type="button" data-go="' + k + '"' + (k === cur ? ' class="active"' : '') + '>' +
+                 icon(k) + '<span>' + LABEL[k] + '</span></button>';
+        }).join('') + '</div>' +
+        '<div class="ms-data">' +
+          '<button type="button" data-act="btnExport">' + icon('export') + '<span>Back up data</span></button>' +
+          '<button type="button" data-act="btnImport">' + icon('import') + '<span>Restore backup</span></button>' +
+        '</div>';
+      sheet.addEventListener('click', function(e){
+        var t = e.target.closest('button'); if (!t) return;
+        var tab = t.getAttribute('data-go'), act = t.getAttribute('data-act');
+        closeSheet();
+        if (tab) go(tab);
+        else if (act) { var hb = document.getElementById(act); if (hb) hb.click(); }
+      });
+      document.body.appendChild(scrim);
+      document.body.appendChild(sheet);
+      bar.querySelector('[data-go="more"]').classList.add('open');
+      try { history.pushState({ birdMore: 1 }, ''); sheetHist = true; } catch (e) {}
+    }
+    window.addEventListener('popstate', function(){ if (sheet) closeSheet(true); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && sheet) closeSheet(); });
+
+    bar.addEventListener('click', function(e){
+      var b = e.target.closest('button[data-go]'); if (!b) return;
+      var k = b.getAttribute('data-go');
+      if (k === 'more') { openSheet(); return; }
+      closeSheet();
+      if (k !== curTab()) go(k);
+      else { try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (er) { window.scrollTo(0, 0); } }
+    });
+
+    function sync(){
+      var cur = curTab(), inMore = MORE.indexOf(cur) !== -1;
+      bar.querySelectorAll('button[data-go]').forEach(function(b){
+        var k = b.getAttribute('data-go');
+        var on = k === 'more' ? inMore : k === cur;
+        b.classList.toggle('active', on);
+        if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+      });
+    }
+    try {
+      new MutationObserver(sync).observe(tabsNav, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    } catch (e) {}
+    sync();
+
+    // Hide the bar while typing so it doesn't ride up on the soft keyboard
+    // and cover the field being edited.
+    function isTextField(el){
+      if (!el) return false;
+      if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+      return el.tagName === 'INPUT' && !/^(button|checkbox|radio|range|file|submit|reset|color)$/i.test(el.type || '');
+    }
+    document.addEventListener('focusin', function(e){ if (isTextField(e.target)) document.body.classList.add('typing'); });
+    document.addEventListener('focusout', function(){
+      setTimeout(function(){ if (!isTextField(document.activeElement)) document.body.classList.remove('typing'); }, 60);
+    });
+  })();
+
   // Wrap the page's openSettings so the modal gains the theme picker + offline
   // section + update checker + native-backup list + (on the web) install.
   if (typeof openSettings === 'function') {

@@ -84,26 +84,107 @@ html,body{
   max-width: 100% !important;
 }
 
-/* On phone-width screens the brand row (logo + title + Export / Import /
-   Settings) needs ~500px, and the overflow-x guard above CLIPS the buttons
-   off the right edge with no way to scroll to them. Let the row wrap: the
-   page's .brand-spacer{flex:1} becomes a full-width break, so line 1 is the
-   logo + title and line 2 is the action buttons, kept right-aligned. */
-@media (max-width: 540px){
+/* ============================================================
+   Phone navigation (<=720px) — pairs with android-inject.js §10.
+   The page's 10-tab nav wraps to three rows in a sticky header (~260px). On
+   phones: slim one-line header (mark + title + settings), the tab nav and the
+   Export/Import buttons hidden (both live in the "More" sheet), and a bottom
+   tab bar. Desktop/tablet widths are untouched.
+   ============================================================ */
+:root{ --bnav-h:62px; }
+#bottom-nav, .more-sheet, .more-scrim{ display:none; }
+
+@media (max-width: 720px){
+  /* ---- slim header ---- */
+  header.app nav.tabs,
+  header.app #btnExport,
+  header.app #btnImport,
+  header.app .brand-text .tag{ display:none !important; }
+  header.app{ border-bottom-width:1px !important; }
   .brand-row{
-    flex-wrap: wrap !important;
-    row-gap: 0 !important;
+    padding:10px calc(14px + var(--android-inset-right)) 10px calc(16px + var(--android-inset-left)) !important;
+    gap:10px !important;
   }
-  .brand-spacer{
-    flex-basis: 100% !important;
-    height: 0 !important;
+  .brand-mark{ width:30px !important; height:30px !important; }
+  .brand-text h1{ font-size:22px !important; letter-spacing:.2px !important; }
+  header.app .hdr-icon{ width:38px; height:38px; padding:0; justify-content:center; }
+
+  /* ---- bottom tab bar ---- */
+  body.has-bottom-nav{
+    padding-bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px)) !important;
   }
-  .brand-row .hdr-btn{
-    margin-top: 8px !important;
+  #bottom-nav{
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index:94; /* under modals (100) */
+    height:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px));
+    padding:0 calc(6px + var(--android-inset-right)) calc(var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px)) calc(6px + var(--android-inset-left));
+    box-sizing:border-box;
+    background:var(--paper);
+    border-top:1px solid var(--line);
+    box-shadow:0 -4px 16px rgba(40,30,15,.06);
+    transition:transform .18s ease;
   }
-  #btnExport{
-    margin-left: auto !important;
+  body.typing #bottom-nav{ transform:translateY(110%); }
+  #bottom-nav button{
+    flex:1 1 0; min-width:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    background:none; border:0; padding:0; margin:0; cursor:pointer;
+    color:var(--ink-soft); font-family:var(--sans); font-size:11px; font-weight:600; letter-spacing:.02em;
+    -webkit-tap-highlight-color:transparent;
   }
+  #bottom-nav .bn-ico{
+    position:relative; display:flex; align-items:center; justify-content:center;
+    width:54px; height:30px; border-radius:15px;
+  }
+  #bottom-nav .bn-ico::before{
+    content:""; position:absolute; inset:0; border-radius:inherit;
+    background:currentColor; opacity:0; transform:scaleX(.6);
+    transition:opacity .18s ease, transform .18s ease;
+  }
+  #bottom-nav .bn-ico svg{ position:relative; }
+  #bottom-nav button.active, #bottom-nav button.open{ color:var(--forest); }
+  #bottom-nav button.active .bn-ico::before,
+  #bottom-nav button.open .bn-ico::before{ opacity:.13; transform:none; }
+  #bottom-nav button:active .bn-ico::before{ opacity:.2; transform:none; }
+
+  /* ---- "More" sheet ---- */
+  .more-scrim{
+    display:block; position:fixed; inset:0; z-index:97;
+    background:rgba(20,15,8,.32); animation:fade .15s;
+  }
+  .more-sheet{
+    display:block; position:fixed; z-index:98;
+    left:calc(10px + var(--android-inset-left)); right:calc(10px + var(--android-inset-right));
+    bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 8px);
+    padding:10px; border-radius:18px;
+    background:var(--paper); border:1px solid var(--line);
+    box-shadow:0 12px 36px rgba(20,15,8,.22);
+    animation:rise .18s ease;
+  }
+  .more-sheet .ms-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:4px; }
+  .more-sheet .ms-grid button{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px;
+    min-height:78px; padding:10px 4px; border:0; border-radius:12px; background:none; cursor:pointer;
+    color:var(--ink); font-family:var(--sans); font-size:12.5px; font-weight:600; text-align:center;
+  }
+  .more-sheet .ms-grid button svg{ color:var(--forest); }
+  .more-sheet .ms-grid button:active{ background:var(--paper-2); }
+  .more-sheet .ms-grid button.active{ background:var(--paper-2); color:var(--forest); }
+  .more-sheet .ms-data{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px;
+    margin-top:8px; padding-top:10px; border-top:1px solid var(--line);
+  }
+  .more-sheet .ms-data button{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:11px 8px; border-radius:11px; border:1px solid var(--line); background:none; cursor:pointer;
+    color:var(--ink-soft); font-family:var(--sans); font-size:13px; font-weight:600;
+  }
+  .more-sheet .ms-data svg{ width:18px; height:18px; }
+
+  /* ---- lift everything that floats at the bottom above the bar ---- */
+  .to-top{ bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 14px) !important; }
+  .toast{ bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 14px) !important; }
+  #install-banner{ bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 12px); }
+  #offline-backup-banner{ bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px)); padding-bottom:10px; }
 }
 
 /* ---- Offline-images settings section ---- */
