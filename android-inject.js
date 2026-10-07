@@ -847,7 +847,7 @@
       var inner = (SIL[groupFor(b.fam)] || SIL.passerine)(c);
       return '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">' +
         '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
-        '<stop offset="0" stop-color="#efe6cd"/><stop offset="1" stop-color="#e2d5b4"/></linearGradient></defs>' +
+        '<stop offset="0" style="stop-color:var(--sil-a,#efe6cd)"/><stop offset="1" style="stop-color:var(--sil-b,#e2d5b4)"/></linearGradient></defs>' +
         '<rect width="100" height="100" fill="url(#' + gid + ')"/>' + inner + '</svg>';
     }
     var _origBirdSVG = birdSVG;
@@ -1422,6 +1422,205 @@
     document.addEventListener('focusout', function(){
       setTimeout(function(){ if (!isTextField(document.activeElement)) document.body.classList.remove('typing'); }, 60);
     });
+  })();
+
+  /* ---- 11. Phone filters sheet ----
+     On phones, Seen / Lists / Targets opened with 370-860px of controls
+     before the first bird. Below 720px the view's secondary controls (year,
+     region, sort, size, colour, season, card size, list tools) move into a
+     bottom sheet behind one "Filters" button that shows how many filters are
+     active; search, the + button and the list/region you're viewing stay put.
+     Controls are MOVED (their page handlers come along). A filter change
+     re-renders the view, so render() is wrapped to rebuild the sheet from
+     the fresh controls and re-open it if it was open. The sheet holds a
+     history entry so Android Back closes it. Desktop is untouched. */
+  var FX_SLIDERS = '<svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>';
+  var fxEnhance = function(){};
+  (function installFilterSheet(){
+    if (typeof render !== 'function') return;
+    var mq = window.matchMedia ? window.matchMedia('(max-width: 720px)') : null;
+    var openFor = null, sheet = null, scrim = null, sheetHist = false;
+    function cur(){ try { return currentTab; } catch (e) { return ''; } }
+    function reordering(){ try { return !!seenState.reorder; } catch (e) { return false; } }
+
+    // Which controls go into the sheet for each view.
+    function plan(view, tab){
+      var moved = [], tools = [], host = null, after = null;
+      if (tab === 'seen') {
+        var tb = view.querySelector('.toolbar'); if (!tb) return null;
+        Array.prototype.forEach.call(tb.children, function(c){
+          if (c.tagName === 'DIV' && !/view-head|spacer|search-wrap/.test(c.className)) moved.push(c);
+          else if (c.tagName === 'BUTTON' && (c.classList.contains('grid-toggle') ||
+                   (/Reorder/i.test(c.textContent) && !reordering()))) moved.push(c);
+        });
+        host = tb; after = tb.querySelector('#addSeen') || tb.querySelector('.search-wrap');
+      } else if (tab === 'lists') {
+        var fb = view.querySelector('.filter-bar.stick'); if (!fb) return null;
+        Array.prototype.forEach.call(fb.children, function(c){
+          if (c.classList.contains('fg') || c.classList.contains('grid-toggle')) moved.push(c);
+          else if (c.tagName === 'BUTTON') tools.push(c);           // custom-list edit / delete
+        });
+        var ltb = view.querySelector('.toolbar');
+        if (ltb) Array.prototype.forEach.call(ltb.children, function(c){ if (c.tagName === 'BUTTON') tools.push(c); });
+        host = fb; after = fb.querySelector('.search-wrap');
+      } else if (tab === 'targets') {
+        var ttb = view.querySelector('.toolbar'); if (!ttb) return null;
+        var season = ttb.querySelector('#tSeason');
+        if (season && season.parentNode !== ttb) moved.push(season.parentNode);
+        var gt = ttb.querySelector('.grid-toggle'); if (gt) moved.push(gt);
+        var tfb = view.querySelector('.filter-bar.stick');
+        host = tfb || ttb; after = tfb ? tfb.querySelector('.fg') : null;
+      } else return null;
+      return { moved: moved, tools: tools, host: host, after: after };
+    }
+    function activeCount(nodes){
+      var n = 0;
+      nodes.forEach(function(c){
+        if (!c.querySelectorAll) return;
+        Array.prototype.forEach.call(c.tagName === 'SELECT' ? [c] : c.querySelectorAll('select'), function(sel){ if (sel.selectedIndex > 0) n++; });
+        var seg = c.classList.contains('seg') ? c : c.querySelector('.seg');
+        if (seg) { var b0 = seg.querySelector('button'); if (b0 && !b0.classList.contains('active')) n++; }
+      });
+      return n;
+    }
+    function removeSheetDom(){
+      if (sheet) { sheet.remove(); sheet = null; }
+      if (scrim) { scrim.remove(); scrim = null; }
+    }
+    function closeSheet(fromPop){
+      removeSheetDom(); openFor = null;
+      if (sheetHist && !fromPop) { sheetHist = false; try { history.back(); } catch (e) {} }
+      sheetHist = false;
+    }
+    function openSheet(tab, panel, tools){
+      removeSheetDom();
+      scrim = document.createElement('div'); scrim.className = 'fx-scrim';
+      scrim.onclick = function(){ closeSheet(); };
+      sheet = document.createElement('div'); sheet.className = 'fx-sheet';
+      sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-label', 'Filters');
+      sheet.innerHTML = '<div class="fx-head"><h3>Filters</h3><button type="button" class="btn sm fx-done">Done</button></div>';
+      sheet.appendChild(panel); panel.hidden = false;
+      if (tools && tools.childNodes.length) { sheet.appendChild(tools); tools.hidden = false; }
+      // Actions that open a dialog or change mode close the sheet first; plain
+      // filter changes keep it open (it re-opens after the re-render).
+      sheet.addEventListener('click', function(e){
+        var b = e.target.closest('button'); if (!b) return;
+        if (b.classList.contains('fx-done')) { closeSheet(); return; }
+        if (b.closest('.fx-tools') || /Reorder/i.test(b.textContent)) closeSheet();
+      }, true);
+      document.body.appendChild(scrim); document.body.appendChild(sheet);
+      if (!sheetHist) { try { history.pushState({ birdFx: 1 }, ''); sheetHist = true; } catch (e) {} }
+      openFor = tab;
+    }
+    window.addEventListener('popstate', function(){ if (openFor) closeSheet(true); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && openFor) closeSheet(); });
+
+    fxEnhance = function(){
+      removeSheetDom();
+      var view = document.getElementById('view'), tab = cur();
+      if (openFor && openFor !== tab) closeSheet();            // left the view with it open
+      if (!view || !mq || !mq.matches) return;
+      var p = plan(view, tab);
+      if (!p || !p.host || (!p.moved.length && !p.tools.length)) { if (openFor) closeSheet(); return; }
+      var panel = document.createElement('div'); panel.className = 'fx-body'; panel.hidden = true;
+      p.moved.forEach(function(c){ panel.appendChild(c); });
+      // Loose buttons (card size, Reorder) read as a labelled "Layout" row
+      // instead of a lone, unexplained icon at the bottom.
+      var loose = Array.prototype.filter.call(panel.children, function(c){ return c.tagName === 'BUTTON'; });
+      if (loose.length) {
+        var grp = document.createElement('div');
+        grp.innerHTML = '<label class="fld">Layout</label><div class="fx-row"></div>';
+        loose.forEach(function(b){ grp.lastChild.appendChild(b); });
+        panel.appendChild(grp);
+      }
+      var tools = document.createElement('div'); tools.className = 'fx-tools'; tools.hidden = true;
+      if (p.tools.length) {
+        var lbl = document.createElement('div'); lbl.className = 'fx-sub'; lbl.textContent = 'List tools';
+        tools.appendChild(lbl);
+        p.tools.forEach(function(c){ tools.appendChild(c); });
+      }
+      view.appendChild(panel); view.appendChild(tools);       // parked (hidden) until opened
+      var n = activeCount(p.moved);
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'fx-btn' + (n ? ' on' : '');
+      btn.setAttribute('aria-label', n ? 'Filters, ' + n + ' active' : 'Filters');
+      btn.innerHTML = FX_SLIDERS + '<span>Filters</span>' + (n ? '<span class="fx-n">' + n + '</span>' : '');
+      if (p.after && p.after.parentNode === p.host) p.after.insertAdjacentElement('afterend', btn);
+      else p.host.appendChild(btn);
+      btn.onclick = function(){ openSheet(tab, panel, tools); };
+      if (openFor === tab) openSheet(tab, panel, tools);       // keep it open across the re-render
+    };
+    if (mq && mq.addEventListener) mq.addEventListener('change', function(){ closeSheet(); try { render(); } catch (e) {} });
+  })();
+
+  /* ---- 12. Line icons for buttons ----
+     Buttons used symbols and emoji as icons (⤓ ⤒ ✎ ★ ▶ ✓ 📷 🔊 📍 …) next to
+     the line-drawn gear and tab bar. Swap a LEADING symbol for a matching
+     line icon in the same style. Runs over the whole document on DOM changes
+     (views, dialogs, sheets), so every template is covered without touching
+     index.html; a button whose label is rewritten gets re-processed. Region
+     emoji and decorative empty-state emoji are left alone (personality, not
+     controls), as are <option>s, which can't show icons. */
+  (function installIcons(){
+    var P = {
+      '⤓':'<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
+      '⤒':'<path d="M12 15.5v-11M7.5 9 12 4.5 16.5 9"/><path d="M5 19.5h14"/>',
+      '＋':'<path d="M12 5v14M5 12h14"/>',
+      '✎':'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+      '🐦':'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+      '📷':'<rect x="3" y="7" width="18" height="13" rx="2.5"/><path d="M8.5 7 10 4.5h4L15.5 7"/><circle cx="12" cy="13.5" r="3.5"/>',
+      '★':'<path d="m12 3.8 2.5 5.2 5.7.8-4.1 4 1 5.7L12 16.8l-5.1 2.7 1-5.7-4.1-4 5.7-.8z"/>',
+      '🔊':'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+      '📍':'<path d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+      '📋':'<rect x="5" y="4.5" width="14" height="16" rx="2"/><path d="M9 3.5h6v3H9z"/><path d="m9 13 2 2 4-4"/>',
+      '■':'<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/>',
+      '▶':'<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>',
+      '✓':'<path d="M5 12.5 9.5 17 19 7.5"/>',
+      '🔭':'<circle cx="6.7" cy="15.6" r="3.6"/><circle cx="17.3" cy="15.6" r="3.6"/><path d="M10.3 15.2h3.4"/><path d="M3.6 13.6 5.9 5.5h2.6l1.2 5.6"/><path d="M20.4 13.6l-2.3-8.1h-2.6l-1.2 5.6"/>',
+      '◎':'<circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+      '📤':'<path d="M12 15V4M7.5 8.5 12 4l4.5 4.5"/><path d="M5 12v6.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V12"/>',
+      '⠿':'<g fill="currentColor" stroke="none"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></g>',
+      '🗺️':'<path d="M9 4.5 3.5 6.6v13l5.5-2.1 6 2.1 5.5-2.1v-13L15 6.6l-6-2.1z"/><path d="M9 4.5v13M15 6.6v13"/>',
+      '🗺':'<path d="M9 4.5 3.5 6.6v13l5.5-2.1 6 2.1 5.5-2.1v-13L15 6.6l-6-2.1z"/><path d="M9 4.5v13M15 6.6v13"/>'
+    };
+    var KEYS = Object.keys(P).sort(function(a, b){ return b.length - a.length; });
+    function fix(btn){
+      if (btn.closest('#bottom-nav,.more-sheet')) return;
+      var w = document.createTreeWalker(btn, NodeFilter.SHOW_TEXT), t;
+      while ((t = w.nextNode())) { if (t.nodeValue.trim()) break; }
+      if (!t) return;
+      var s = t.nodeValue.replace(/^\s+/, '');
+      for (var i = 0; i < KEYS.length; i++) {
+        var k = KEYS[i];
+        if (s.indexOf(k) !== 0) continue;
+        var holder = document.createElement('span');
+        holder.innerHTML = '<svg class="ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" ' +
+          'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[k] + '</svg>';
+        t.parentNode.insertBefore(holder.firstChild, t);
+        t.nodeValue = s.slice(k.length).replace(/^[️\s]+/, '');
+        return;
+      }
+    }
+    var queued = false;
+    function sweep(){
+      queued = false;
+      document.querySelectorAll('button, a.btn').forEach(fix);
+    }
+    function queue(){ if (!queued) { queued = true; requestAnimationFrame(sweep); } }
+    try { new MutationObserver(queue).observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+    sweep();
+  })();
+
+  // Re-apply the phone filter sheet after every view render.
+  (function wrapRender(){
+    if (typeof render !== 'function') return;
+    var _render = render;
+    render = window.render = function(){
+      var r = _render.apply(this, arguments);
+      try { fxEnhance(); } catch (e) {}
+      return r;
+    };
+    try { fxEnhance(); } catch (e) {}
   })();
 
   // Wrap the page's openSettings so the modal gains the theme picker + offline

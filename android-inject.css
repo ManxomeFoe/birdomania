@@ -53,7 +53,7 @@ header.app{
 #install-banner b{display:block;font-weight:600;margin-bottom:4px;color:var(--forest,#2f4a3c)}
 #install-banner span{display:block;color:var(--ink-soft,#5a4a37);font-size:var(--fs-sm)}
 #install-banner .ib-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-#install-banner .ib-go{background:var(--forest,#2f4a3c);color:#f4ecd8;border-color:var(--forest,#2f4a3c)}
+#install-banner .ib-go{background:var(--forest,#2f4a3c);color:var(--on-accent,#f4ecd8);border-color:var(--forest,#2f4a3c)}
 /* The app's .btn is already a solid forest button, so the dismiss action has to
    be pulled back explicitly or "Not now" reads as the primary choice. */
 #install-banner .ib-no{
@@ -92,6 +92,16 @@ html,body{
    tab bar. Desktop/tablet widths are untouched.
    ============================================================ */
 :root{ --bnav-h:62px; }
+/* Bird-silhouette backdrop (birdSVG, §6) follows the theme. */
+:root{ --sil-a:#efe6cd; --sil-b:#e2d5b4; }
+body.dark{ --sil-a:#2e2a22; --sil-b:#25221b; }
+body.dark.theme-nocturne{ --sil-a:#1b2a33; --sil-b:#15212a; --placeholder:#16222a; --map-none:#22303a; }
+
+/* ---- Line icons (android-inject.js §12) ---- */
+.ico{ flex:0 0 auto; width:1.15em; height:1.15em; vertical-align:-.2em; margin-right:.35em; }
+.btn .ico, .hdr-btn .ico, .fx-btn .ico, .icon-add .ico, .grid-toggle .ico{ margin-right:0; }
+.icon-add .ico{ width:18px; height:18px; }
+.btn.sm .ico{ width:15px; height:15px; }
 #bottom-nav, .more-sheet, .more-scrim{ display:none; }
 
 @media (max-width: 720px){
@@ -179,6 +189,47 @@ html,body{
     color:var(--ink-soft); font-family:var(--sans); font-size:var(--fs-sm); font-weight:600;
   }
   .more-sheet .ms-data svg{ width:18px; height:18px; }
+
+  /* ---- Filters button + sheet (android-inject.js §11) ---- */
+  .fx-btn{
+    display:inline-flex; align-items:center; gap:7px; height:38px; padding:0 13px; flex:0 0 auto;
+    border:1px solid var(--line-dark); border-radius:var(--r-sm); background:var(--surface); cursor:pointer;
+    color:var(--ink); font-family:var(--sans); font-size:var(--fs-sm); font-weight:600;
+  }
+  .fx-btn.on{ border-color:var(--forest); color:var(--forest); }
+  /* Let search share its row with + and Filters (it insisted on 200px). */
+  /* Direct children only: Targets nests its search in a column .fg, where a
+     flex-basis would stretch it vertically. */
+  .toolbar > .search-wrap, .filter-bar > .search-wrap{ min-width:0; flex:1 1 120px; }
+  .filter-bar > .fg:has(.search-wrap){ min-width:0; flex:1 1 120px !important; }
+  .filter-bar > .fg .search-wrap{ min-width:0; }
+  .fx-n{
+    min-width:18px; height:18px; padding:0 5px; border-radius:var(--r-pill);
+    background:var(--forest); color:var(--on-accent); font-size:var(--fs-micro);
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+  .fx-scrim{ position:fixed; inset:0; z-index:97; background:rgba(20,15,8,.32); animation:fade .15s; }
+  .fx-sheet{
+    position:fixed; z-index:98;
+    left:calc(10px + var(--android-inset-left)); right:calc(10px + var(--android-inset-right));
+    bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 8px);
+    max-height:min(72vh, calc(100vh - var(--bnav-h) - 90px)); overflow:auto;
+    padding:14px 16px 16px; border-radius:var(--r-lg);
+    background:var(--paper); border:1px solid var(--line); box-shadow:var(--shadow);
+    animation:rise .18s ease;
+  }
+  .fx-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .fx-head h3{ font-size:var(--fs-lg); }
+  .fx-body{ display:flex; flex-direction:column; gap:14px; }
+  .fx-body > div, .fx-body .fg{ display:flex; flex-direction:column; }
+  .fx-body select{ width:100%; min-width:0; }
+  .fx-body .seg{ align-self:flex-start; }
+  .fx-row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  /* Desktop spacers push lone pickers (List, Region) to the right edge; on
+     a phone everything else is left-aligned, so drop them. */
+  #view .toolbar > .spacer{ display:none; }
+  .fx-tools{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .fx-sub{ flex-basis:100%; font-size:var(--fs-micro); font-weight:600; letter-spacing:.5px; text-transform:uppercase; color:var(--umber); }
 
   /* ---- lift everything that floats at the bottom above the bar ---- */
   .to-top{ bottom:calc(var(--bnav-h) + var(--android-inset-bottom) + env(safe-area-inset-bottom, 0px) + 14px) !important; }
