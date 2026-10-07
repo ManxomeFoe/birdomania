@@ -6,14 +6,18 @@
    a push). Cross-origin requests (Wikipedia / Wikimedia bird photos) are left
    untouched — the app manages those itself (live fetch + IndexedDB offline
    store). */
-const CACHE = 'birdomania-shell-v4';   // v4: + web manifest and install icons
+const CACHE = 'birdomania-shell-v5';   // v5: + bundled fonts (v4: manifest and install icons)
 const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js',
                'leaflet.js', 'leaflet.css',
                // Installed copies must be able to re-read these with no
                // network — an uncached manifest/icon makes an installed PWA
                // look broken in the launcher after an offline update.
                'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
-               'icon-maskable-512.png', 'icon-180.png'];
+               'icon-maskable-512.png', 'icon-180.png',
+               // Typefaces: without them an offline launch falls back to
+               // generic system fonts.
+               'fonts/source-serif-4-normal.woff2', 'fonts/source-serif-4-italic.woff2',
+               'fonts/figtree-normal.woff2'];
 
 /* Bird-image byte cache (v3): upload.wikimedia.org thumbnails are served
    cache-first from Cache Storage, so every previously-seen bird paints

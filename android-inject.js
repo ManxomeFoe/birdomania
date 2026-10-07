@@ -1271,8 +1271,8 @@
     var tabsNav = document.getElementById('tabs');
     if (!tabsNav || document.getElementById('bottom-nav')) return;
     // Swap these two lists to change what lives on the bar vs. in More.
-    var PRIMARY = ['home', 'seen', 'lists', 'map'];
-    var MORE    = ['targets', 'log', 'stats', 'quiz', 'portfolio', 'friends'];
+    var PRIMARY = ['home', 'seen', 'log', 'map'];
+    var MORE    = ['lists', 'targets', 'stats', 'quiz', 'portfolio', 'friends'];
     var LABEL = { home:'Home', seen:'Seen', lists:'Lists', map:'Map', more:'More',
                   targets:'Targets', log:"Traveller's Log", stats:'Stats', quiz:'Quiz',
                   portfolio:'Portfolio', friends:'Friends' };
@@ -1291,6 +1291,7 @@
       export:'<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
       import:'<path d="M12 15.5v-11M7.5 9 12 4.5 16.5 9"/><path d="M5 19.5h14"/>'
     };
+    var SHORT = { log:'Log' };   // bar labels must fit ~70px
     function icon(k){
       return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" ' +
              'stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[k] + '</svg>';
@@ -1307,7 +1308,7 @@
     bar.setAttribute('aria-label', 'Sections');
     bar.innerHTML = PRIMARY.concat(['more']).map(function(k){
       return '<button type="button" data-go="' + k + '"><span class="bn-ico">' + icon(k) +
-             '</span><span class="bn-lbl">' + LABEL[k] + '</span></button>';
+             '</span><span class="bn-lbl">' + (SHORT[k] || LABEL[k]) + '</span></button>';
     }).join('');
     document.body.appendChild(bar);
     document.body.classList.add('has-bottom-nav');
