@@ -19,7 +19,7 @@ const SHELL = ['./', 'index.html', 'android-inject.css', 'android-inject.js',
                'fonts/source-serif-4-normal.woff2', 'fonts/source-serif-4-italic.woff2',
                'fonts/figtree-normal.woff2'];
 
-/* Bird-image byte cache (v3): upload.wikimedia.org thumbnails are served
+/* Bird-image byte cache (v3): Wikimedia thumbnails (thumb. + upload.wikimedia.org) are served
    cache-first from Cache Storage, so every previously-seen bird paints
    instantly on later launches — even offline. Thumb URLs are filename-
    versioned (and pinned in the app's wikiCache), so entries never go stale
@@ -119,7 +119,11 @@ self.addEventListener('fetch', function (e) {
   // recordings (bird calls) live on the same host but stream normally — don't
   // byte-cache them: they're large, and their range (206) responses would
   // corrupt the cache and break <audio> seeking.
-  if (req.method === 'GET' && url.hostname === 'upload.wikimedia.org') {
+  // Wikimedia moved thumbnails to thumb.wikimedia.org (2026); full images
+  // and audio stay on upload.wikimedia.org. Matching only the old host
+  // silently stopped all on-device photo caching. Exact hosts only — no
+  // suffix match, so lookalike hosts can't land in the cache.
+  if (req.method === 'GET' && (url.hostname === 'upload.wikimedia.org' || url.hostname === 'thumb.wikimedia.org')) {
     if (/\.(ogg|oga|mp3|wav|opus|flac|m4a)$/i.test(url.pathname)) return;
     e.respondWith(byteCacheFirst(req.url, IMG_CACHE, IMG_MAX));
     return;

@@ -169,6 +169,36 @@
     } catch (e) {}
   })();
 
+  /* ---- 0a2. Repair birds that pointed at the wrong Wikipedia article ----
+     "Merlin" resolves to the legendary wizard, so the merlin (falcon) card
+     showed a woodcut of a wizard; BIRDS now has wiki:"Merlin (bird)". The bad
+     thumbnail is cached as a SUCCESS, so it never refetches on its own, and a
+     region "offline download" of it also became the card's display photo
+     (birdThumb). Clear all of that once per fix; the batch warm-up then
+     fetches the right photo. Bump an id's number to re-run its repair. */
+  (function repairWrongArticles(){
+    var FIXED = { merlin: 1 };
+    try {
+      if (!state.__wikiFixed) state.__wikiFixed = {};
+      var pend = (typeof _wikiPending !== 'undefined') ? _wikiPending : null;
+      var changed = false;
+      Object.keys(FIXED).forEach(function(id){
+        if (state.__wikiFixed[id] === FIXED[id]) return;
+        state.__wikiFixed[id] = FIXED[id]; changed = true;
+        if (state.wikiCache) delete state.wikiCache[id];
+        if (pend) delete pend[id];
+        var off = state.offlineImages && state.offlineImages[id];
+        if (off) {
+          var t = state.birdThumb && state.birdThumb[id];
+          if (t && t.kind === 'user' && t.ref === off) delete state.birdThumb[id];
+          delete state.offlineImages[id];
+          try { if (typeof imgDel === 'function') imgDel(off); } catch (e) {}
+        }
+      });
+      if (changed) { save(); if (window.render) render(); }
+    } catch (e) {}
+  })();
+
   /* ---- 0b. Lighter bird images ----
      The page's fetchWiki() prefers originalimage.source — the FULL-RESOLUTION
      Wikipedia photo (often several MB) — for every card thumbnail. Replace it

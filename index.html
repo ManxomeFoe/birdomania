@@ -156,7 +156,14 @@ body.dark .grid-toggle:hover{background:rgba(127,174,146,.12)}
 .card:hover{transform:translateY(-3px);box-shadow:0 6px 14px rgba(60,45,25,.16),0 14px 32px rgba(60,45,25,.12)}
 .card .thumb{aspect-ratio:4/3;width:100%;object-fit:cover;display:block;background:#e8dfc6}
 .card .thumb-wrap{position:relative;aspect-ratio:4/3;background:#e8dfc6;overflow:hidden}
-.card .thumb-wrap img,.card .thumb-wrap svg{width:100%;height:100%;object-fit:contain;display:block}
+.card .thumb-wrap img,.card .thumb-wrap svg{width:100%;height:100%;object-fit:cover;display:block}
+/* Fill the card edge to edge (no letterbox bars). When a tall photo has to
+   be cropped, anchor the crop near the TOP: perched birds (hawks, owls,
+   herons) are framed with the head at the very top, and at 30% the
+   tallest raptor photos lost their heads; 5% kept every head across all
+   67 portrait photos in the catalog. Wide photos only lose their sides,
+   so this has no effect on them. The lightbox shows the full photo. */
+.card .thumb-wrap img{object-position:50% 5%}
 .card .body{padding:12px 14px 14px}
 .card .name{font-family:var(--serif);font-size:17px;font-weight:600;color:var(--ink);line-height:1.15}
 .card .sci{font-family:var(--serif);font-style:italic;font-size:12.5px;color:var(--umber);margin-top:1px}
@@ -734,7 +741,7 @@ const BIRDS = {
 "sharp-shinned-hawk":{name:"Sharp-shinned Hawk",sci:"Accipiter striatus",fam:"Hawks & Eagles",r:"Uncommon",sz:"11 in",sea:["Summer","Migration"],reg:["AK","MA","PA"],col:"#5a4a3a",feat:"A small, long-tailed forest hawk with short rounded wings; adults are blue-gray above with rusty-barred underparts and a square tail tip.",voice:"A high, sharp 'kik-kik-kik'."},
 "northern-goshawk":{name:"Northern Goshawk",sci:"Accipiter gentilis",fam:"Hawks & Eagles",r:"Rare",sz:"21 in",sea:["Year-round"],reg:["AK","MA"],col:"#5a5a52",feat:"A powerful gray forest hawk with a bold white eyebrow over a fierce red eye; fast and fierce in defense of its nest.",voice:"A loud, rapid, scolding 'ki-ki-ki-ki-ki'.",wiki:"Eurasian goshawk"},
 "rough-legged-hawk":{name:"Rough-legged Hawk",sci:"Buteo lagopus",fam:"Hawks & Eagles",r:"Uncommon",sz:"21 in",sea:["Summer","Migration"],reg:["AK","MA","PA"],col:"#6a5a44",feat:"A tundra buteo with feathered legs; pale birds show a dark belly and black 'wrist' patches and hover into the wind hunting voles.",voice:"A descending, cat-like squeal."},
-"merlin":{name:"Merlin",sci:"Falco columbarius",fam:"Falcons",r:"Uncommon",sz:"10 in",sea:["Summer","Migration"],reg:["AK","PA","MA"],col:"#4a4a5a",feat:"A small, dashing falcon with pointed wings and a banded tail; powers low after songbirds in fast, direct flight.",voice:"A rapid, shrill 'ki-ki-ki-ki'."},
+"merlin":{name:"Merlin",wiki:"Merlin (bird)",sci:"Falco columbarius",fam:"Falcons",r:"Uncommon",sz:"10 in",sea:["Summer","Migration"],reg:["AK","PA","MA"],col:"#4a4a5a",feat:"A small, dashing falcon with pointed wings and a banded tail; powers low after songbirds in fast, direct flight.",voice:"A rapid, shrill 'ki-ki-ki-ki'."},
 "peregrine-falcon":{name:"Peregrine Falcon",sci:"Falco peregrinus",fam:"Falcons",r:"Rare",sz:"16 in",sea:["Summer","Migration"],reg:["AK","PA","MA"],col:"#3a3a4a",feat:"A powerful slate-backed falcon with a black 'helmet' and sideburns; stoops on birds at astonishing speed.",voice:"A harsh, rasping 'kak-kak-kak' near the eyrie."},
 "gyrfalcon":{name:"Gyrfalcon",sci:"Falco rusticolus",fam:"Falcons",r:"Rare",sz:"22 in",sea:["Year-round","Winter"],reg:["AK","PA"],col:"#9aa0a6",feat:"The largest falcon, broad-winged and heavy; comes in white, gray and dark morphs and hunts ptarmigan across the Arctic.",voice:"A deep, harsh 'kak-kak-kak', slower than a Peregrine."},
 "osprey":{name:"Osprey",sci:"Pandion haliaetus",fam:"Hawks & Eagles",r:"Uncommon",sz:"23 in",sea:["Summer"],reg:["AK","MA","PA"],col:"#5a4a3a",feat:"A fish-hawk, white below and dark above with a bold dark eye-stripe; hovers, then plunges talons-first for fish.",voice:"A series of clear, rising, whistled 'cheep' notes."},
